@@ -1,2 +1,2 @@
 * doc.rust-lang
-翻译自 https://doc.rust-lang.org/
+翻译自 https://doc.rust-lang.org/stable/book/
