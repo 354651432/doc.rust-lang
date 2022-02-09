@@ -1,0 +1,1963 @@
+* 一个io项目: 构建一个命令行工具
+本章是目前为止所学内容的一个回顾,也是基础库功能的一概要. 我们将建构一个和文件和命令行输入输出交互的命令行工具, 来练习迄今为止了解的rust概念.
+
+rust的快速, 安全, 单二进制输出,和跨平台 让它成为构建命令行工具的理想语言, 对于我们的项目而言, 我们将构建经典命令行工具grep的自己的版本. 最简单的情况下, grep搜索文件里的特定字符串. 为此, grep获取一个文件和字符串的参数. 然后读文件,搜索包含特定字符串的行, 输出这些行.
+
+通过这些方法, 我们将展示怎样用这些命令行功能建构我们的命令行工具, 我们将读环境变量来允许用户配置我们的工具. 我们也把错误消息输出到标准错误输出而不是标准输出, 例如 用户可以重定向输出到一个文件而保留错误消息在屏幕上.
+
+rust社区的一个成员. Andrew Gallant已经创建了一个完整的功能,非常快速版本的grep, 叫作 ripgrep. 类似的 我们版本的grep将会非常简单, 但是这章将给你一些比如ripgrep的真实项目里你需要掌握的背景知识.
+
+我们的grep项目包含以下目前你已经学会的概念:
+- 组织代码 (使用在第7章关于模块你学到的知识)
+- 使用向量和字符串 (集和, 第8章)
+- 错误处理 (第9章)
+- 使用特征和合适和生命周期(第10章)
+- 编写测试(第11章)
+
+我们也会简单的介绍必包, 迭代器, 和特征对象, 这些在13章和17章会详细介绍.
+
+** 接收命令行参数
+像之前一样让我们用 cargo new 创建一个新项目, 我们将我们的新项目叫mingrep以和可能在你系统里面已经有的grep作区分.
+
+#+begin_src shell
+$ cargo new minigrep
+     Created binary (application) `minigrep` project
+$ cd minigrep
+#+end_src
+
+第一件事是让minigrep接收两个命令行参数: 文件名和搜索字符串. 我们可以用cargo run运行我们的程序, 一个搜索字符串和一个搜索的文件路径, 比如:
+#+begin_src shell
+$ cargo run searchstring example-filename.txt
+#+end_src
+
+目前为止, 使用cargo new创建的程序还不能处理我们给它的参数. 一些在crates.io上面已经存在的项目可以帮助我们写一个接收命令行参数的程序, 但是你正在学习这些概念, 让我们自己实现这些功能.
+
+*** 读取参数值
+让minigrep可以读取我们传递给它的命令行参数的值, 我们需要rust标准库提供的一个功能, 它就是 std::env::args. 这个功能返回一个我们给minigrep的命令行参数的迭代器. 我们将在13章深入迭代器. 现在, 你只需要知道两个关于迭代器的细节: 迭代器产生一系列的值和我们可以在一个迭代器上调用collect方法返回一个集合, 例如一个向量,包含所有的迭代器产生的元素.
+
+使用在列表12-1里的代码允许你的minigrep程序读取传递给它的任意的命令行参数然后收集值到一个向量里面.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::env;
+
+fn main() {
+    let args: Vec<String> = env::args().collect();
+    println!("{:?}", args);
+}
+#+end_src
+列表 12-1 收集命令行参数到一个向量然后输出
+
+首先, 我们使用use语句引入 std::env模块到作用域所以我们可以使用args函数. 注意 std::env::args 函数被包含在两级的模块里. 就像我们在第7章描述的一样, 在所需的函数被嵌套在不只一模块的情况下, 它方便的引入父模块到作用域而不是函数. 然后,我们可以简单的使用其它来自std::env的函数. 这也比添加use std::env::args然后调用方法仅仅使用args更少的冲突, 因为args很可能被定义在当前模块的函数错误引用.
+
+#+begin_quote
+带参数的函数和非法的unicode
+注意 如果任意的参数包含非法的unicode, std::env::args 将抛出异常. 如果你的程序需要接收包含非法unicde的参数, 使用 std::env::args_os 代替. 函数返回一个产生OsString值而非String值的迭代器. 在这里为了简单我们选择std::env::args, 因为OsString值每个平台不同而且使用起来比String值更加复杂
+#+end_quote
+
+在main函数的第一行, 我们调用 env::agvs, 然后我们马上使用collect让迭代器返回一个包含所有它产生的所有的值的向量. 我们可以使用collect函数产生各种类型的集合, 所以我们隐含的申明args的类型以指定我们想要一个字符串的向量. 虽然在rust里我们几乎不需要申明类型, collect是一个你经常需要申明的函数因为rust不可能推断出你想要的集合的类型.
+
+最后, 我们使用调试符号 :? 输出向量. 让我们试着第一次没有参数然后有两个参数运行代码:
+#+begin_src shell
+$ cargo run
+   Compiling minigrep v0.1.0 (file:///projects/minigrep)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.61s
+     Running `target/debug/minigrep`
+["target/debug/minigrep"]
+#+end_src
+
+#+begin_src shell
+$ cargo run needle haystack
+   Compiling minigrep v0.1.0 (file:///projects/minigrep)
+    Finished dev [unoptimized + debuginfo] target(s) in 1.57s
+     Running `target/debug/minigrep needle haystack`
+["target/debug/minigrep", "needle", "haystack"]
+#+end_src
+
+注意在向量里的第一个值是"target/debug/minigrep". 这是我们二进制的名字. 这和C语言列出里参数的行为一样, 让程序使用在他们的可执行体里他们执行的名字. 在你想要在消息里输出执行程序的名字或者根据调用程序时引用的命令行别名改变程序的行为时这经常很方便. 但是对于本章的目标, 我们不考虑它和仅仅保留我们需要的两个参数.
+
+*** 在变量里保存参数值
+输出程序插入的参数的向量的值可以访问命令行参数指定的值. 现在我们需要在变量里保留两个参数的值然后我们可以使用来自程序保留的值, 我们在列表 12-2 实现它
+
+文件名: src/main.rs
+#+begin_src rust
+use std::env;
+
+fn main() {
+    let args: Vec<String> = env::args().collect();
+
+    let query = &args[1];
+    let filename = &args[2];
+
+    println!("Searching for {}", query);
+    println!("In file {}", filename);
+}
+#+end_src
+列表 12-2 创建变更保存查询参数和文件名参数
+
+如我们所见我们输出了向量, 程序名称在向量里在args[0]占据了第一个值, 所以我们在引过为1 开始. 第一个参数 minigrep 获取到的是我们搜索的字符串, 所以我们在变量query放置一个引用到第一个参数. 第二个参数将是文件名, 所以我们在filename变量放置引用到第二个参数.
+
+证明代码向我们设想的运作我们临时的输出这些值. 让我们带着参数test和sample.txt 重新运行这个程序:
+#+begin_src shell
+$ cargo run test sample.txt
+   Compiling minigrep v0.1.0 (file:///projects/minigrep)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.0s
+     Running `target/debug/minigrep test sample.txt`
+Searching for test
+In file sample.txt
+#+end_src
+
+很好, 程序正常运作! 我们需要的参数的值被保留在正确的变量里. 之后为了处理一些潜在的错误状况我们将添加错误处理, 比如当用户不提供参数; 目前, 我们不考虑这种情况然后相应的继续添加文件读取功能.
+
+** 读取一个文件
+现在我们添加一个功能来读在filename命令行参数指定的文件. 首先, 我们需要一个简单的文件用来测试: 确保minigrep正常运作的文件的最好的方式是有一些重复的词在多行里数量不多的文本. 列表12-3 有一个Emily Dickinson的诗它就适合!在你项目的根目录创建一个叫 poem.txt的文件, 然后进入诗"I'am Nobody! Who are you?"
+文件名: poem.txt
+#+begin_example
+I'm nobody! Who are you?
+Are you nobody, too?
+Then there's a pair of us - don't tell!
+They'd banish us, you know.
+
+How dreary to be somebody!
+How public, like a frog
+To tell your name the livelong day
+To an admiring bog!
+#+end_example
+列表 12-3 Emily Dickinson的诗 一个很好的例子
+
+在这里的文本, 编辑 src/main.rs 然后添加读文件的代码, 就像显示在列表 12-4 里的一样
+#+begin_src rust
+use std::env;
+use std::fs;
+
+fn main() {
+    // --snip--
+    let args: Vec<String> = env::args().collect();
+
+    let query = &args[1];
+    let filename = &args[2];
+
+    println!("Searching for {}", query);
+    println!("In file {}", filename);
+
+    let contents = fs::read_to_string(filename)
+        .expect("Something went wrong reading the file");
+
+    println!("With text:\n{}", contents);
+}
+#+end_src
+列表 12-4: 读取第二个参数指定文件的内容
+
+首先, 我们添加另一个use语句引入标准库的相关的一部分: 我们需要 std::fs 处理文件.
+
+在main里面, 我们添加新的语句: fs::read_to_string 接收filename, 打开文件, 然后返回一个文件内容的 Result<String>对象.
+
+语句之后, 我们又添加了一个临时的 println! 语句在读完文件以后输出content 的值, 然后我们可以检查目前为止程序运作正常.
+
+让我们用任意的字符串作为第一个命令行参数(因为我们还没有实现搜索部分)然后poem.txt文件作为第二个参数运行这段代码:
+#+begin_src shell
+$ cargo run the poem.txt
+   Compiling minigrep v0.1.0 (file:///projects/minigrep)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.0s
+     Running `target/debug/minigrep the poem.txt`
+Searching for the
+In file poem.txt
+With text:
+I'm nobody! Who are you?
+Are you nobody, too?
+Then there's a pair of us - don't tell!
+They'd banish us, you know.
+
+How dreary to be somebody!
+How public, like a frog
+To tell your name the livelong day
+To an admiring bog!
+#+end_src
+
+很好! 代码读取然后输入文件的内容. 但是这段代码有一点缺陷. main函数拥有了多个责任: 通常来说, 如果每个函数只为一个观点负责,函数维护起来可以更简洁更简单.另一个问题是我们没有尽可能的处理错误. 程序现在还小, 所以这些缺陷还不是大问题, 但是当程序越来越大,清楚的修复它们将会变得更因难. 当开发一个程序早期开始重构是好的实践, 因为重构小规模的代码更加容易. 接下来我们将做这个.
+
+** 模块化重构和错误处理
+提升我们的程序, 我们将解决4个程序结构和如何处理潜在错误的问题.
+
+首先, 我们的main函数展示了两个任务: 解析参数和读文件. 对于一个如此小的函数,这不是太大的问题.然而, 如果我们在main函数里继续增加我们的程序, main函数处理的各种分开的任务将增加. 随着函数责任的增加,它将变得更难去追因, 更难去测试和更难去修改而不去破坏很多部分的一部分. 把功能分开每个函数只负责一个任务是最好的.
+
+这个需求也关系到第二个问题: 虽然 query和filename 对于我们的程序是配置变量, 像 contents 这样的变量被使用来表达程序的逻辑. main函数变得越长,我们需要的更多的变量将在作用域里被引入进来; 在作用域里我们就有了更多的变量,跟踪每个变量的意图将变得更难. 配置变量组织到一个结构体里让它们的意图更清晰是最好的.
+
+第三个问题是当读取文件失败的时候我们使用expect来输出错误信息, 但是错误信息仅仅显示Something went wrong reading the file.读一个文件有很多种错误方式: 比如, 文件可能丢失了, 或者我们可能没有打开它的权限. 现在, 不管什么情况, 我们输出 Something went wrong reading the file 错误消息, 这不能给用户任何信息!
+
+第四, 我们用expect重复的处理不同的错误,然后如果用户没有指定足够的参数运行我们的程序, 他们将得到来自rust的 index out of bounds 错误, 这并没有清楚的解释问题. 如果所有的错误处理代码在一个地方最好了, 将来的维护者仅仅需要一个地方来考虑错误处理逻辑是否需要改变. 把所有错误处理代码放在一个地方将保证我们输入的错误消息对于我们的最终用户将变得有意义.
+
+让我们关注这四个问题重构我们的项目.
+
+*** 二进制项目关注点分离
+main函数的多个任务的分配职责的组织问题对很多二进制项目是一样的. 总之, 当main开始变大 rust 社区开发了一个进程使用对于二进制项目关注点的分离的指导. 这个过程有以下步骤:
++ 把你的程序拆分成 main.rs 和 lib.rs 然后把你的应用程序逻辑移动到 lib.rs里.
++ 当你的命令行解析逻辑很小的时候, 它可以留存main.rs里面.
++ 当命令行解析逻辑开始变得复杂, 从main.rs里面拆分出来放到lib.rs里面
+
+这个过程以后保存在main函数里的责任应该被限制到如下:
++ 使用参数值调用命令行解析逻辑
++ 设置其它的配置
++ 调用在lib.rs里面的run函数
++ 如果run返回一个错误, 处理它
+
+这个模式是关于分离关注点: main.rs 处理运行的程序, lib.rs 处理手头所有的逻辑. 因为你不能直接测试main函数, 这个结构让你测试所有你程序的逻辑移动到lib.rs以后的. 留存main.rs里面的唯一代码当读它的时候尽可能的小以验证它的正确性. 让我们跟随这个步骤重构我们的程序.
+
+*** 抽取参数解析
+我们将抽取解析参数的功能到一个main调用以准备移动命令行参数的逻辑的函数到 src/lib.rs. 列表12-5 展示了新的main 调用新的函数 parse_config, 现在它将定义在src.main.rs.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::env;
+use std::fs;
+
+fn main() {
+    let args: Vec<String> = env::args().collect();
+
+    let (query, filename) = parse_config(&args);
+
+    // --snip--
+
+    println!("Searching for {}", query);
+    println!("In file {}", filename);
+
+    let contents = fs::read_to_string(filename)
+        .expect("Something went wrong reading the file");
+
+    println!("With text:\n{}", contents);
+}
+
+fn parse_config(args: &[String]) -> (&str, &str) {
+    let query = &args[1];
+    let filename = &args[2];
+
+    (query, filename)
+}
+#+end_src
+列表 12-5 从main里面抽取 parse_config函数
+
+我们仍然收集命令行参数到一个向量, 但是相对于在main函数里在索引上1处赋值参数值给变量query和在索引2处的参数值赋值给变量filename, 我们传递整个向量到parse_config 函数. parse_config函数装载了整个逻辑决定哪个参数赋值给哪个变量然后回传值给main. 我们仍然在main函数创造query和filename变量, 但是main函数再也没有决定怎样对应命令行参数跟变量的职责了.
+
+对于我们的小程序来说这里的重构看起来矫枉过正, 但是我们在小规模里完成了重构, 增加步骤. 这种修改以后, 再次运行程序验证参数解析仍然正常. 最好经常去检查你的程序, 当发生问题时定位遇到的情况.
+
+*** 组合配置值
+我们再做一小步去进一步提升parse_config函数. 现在, 我们返回一个元组, 但是当我们立即又拆分元组成分开的部分. 这标志着也许我们还有没的正确的抽象.
+
+另外指出这里可改进的空间是parse_config部分的config, 这隐含了我们返回的两个值是关联的而且是一个配置值的两部分. 在把两个值组合到一个元组的数据结构以外的地方当前我们并没有表达这层意思; 我们可以放两个值到一个结构里然后给每个字段一个有意义的名字. 做完这些, 可以让在这段代码里的不同值的相互关系和它们的意图, 对于以后的维护者更容易.
+
+#+begin_quote
+注意: 当一个复杂类型更适合使用基础值是一个反模式, 称为基础痴迷
+#+end_quote
+
+列表 12-6 展示parse_config 函数的改进
+
+文件名: src/main.rs
+#+begin_src rust
+use std::env;
+use std::fs;
+
+fn main() {
+    let args: Vec<String> = env::args().collect();
+
+    let config = parse_config(&args);
+
+    println!("Searching for {}", config.query);
+    println!("In file {}", config.filename);
+
+    let contents = fs::read_to_string(config.filename)
+        .expect("Something went wrong reading the file");
+
+    // --snip--
+
+    println!("With text:\n{}", contents);
+}
+
+struct Config {
+    query: String,
+    filename: String,
+}
+
+fn parse_config(args: &[String]) -> Config {
+    let query = args[1].clone();
+    let filename = args[2].clone();
+
+    Config { query, filename }
+}
+#+end_src
+列表 12-6 重构 parse_config 返回一个Config 结构的实例
+
+我们添加了一个有字段叫query和filename的定义叫Config的结构体. parse_config 的签名现在指示它返回一个Config值. 在parse_config主体部分, 在我们之前返回引用在args里的字符串值的字符串切片, 我们现在定义Config包含String值的所有者. 在main函数里的args变量是参数值的所有者而且仅仅让parse_config 函数借用它们, 这意味着如果Config尝试获取在args里的值的所有权, 我们违反了rust的借用规则.
+
+我们可以用几种不同的方式管理String数据, 但是最容易的, 虽然不怎么高效, 思路是调用值上面的 clone 方法. 这将为Config实例制造一个完整的复本以拥有它, 和保存一个字符串的引用相比, 这需要更多的时间和内存. 然而, 克隆数据也让我们的代码更加直接了当因为我们不管理引用的生命周期; 在这种情况下,放弃一点小的性能获取简单性是一个值得的权衡.
+
+#+begin_quote
+使用克隆的权衡
+许多的rust程序员避免使用clone去修正所有权的问题是一个趋势, 因为它的运行时开销. 在13章, 你将学习这种类型的情形如何使用更高效的方式. 但是现在, 复制一点字符串继续进度是可行的, 因为你将只复制一次而且你的文件名和查询字符串非常小. 让有一点不高效的程序运行比尝试去在第一次通过时过度优化代码更好. 当你在rust里变得更加有经验, 开始更高效的方式很容易, 但是现在接受clone的调用很完美.
+#+end_quote
+
+我们已经更新了main函数, 这里放置了被 parse_config返回的Config的实例到一个叫config的变量. 我们更新了之前使用分开的 query和filename变量的代码现在使用config结构里面的字符代替.
+
+现在我们的代码更加清楚的表明query和filename是关联的而且它们的目的是配置程序如何工作. 使用这些值的任何代码知道找到他们在config实例里的字段用它们的意图进行命名.
+
+*** 创建一个Config的构造函数
+目前为止,我们提离了从main函数里的命令行参数的解析的责任的逻辑然后放到了parse_config函数里, 做这些帮助我们了解query和filename值是关联的而且它们的关系应该在我们的代码里传达出来. 然后我们添加了个Config 结构体命名query和filename的关联意图然后从parse_config函数可以返回结构体的字符作为值的名字.
+
+所以现在parse_config函数的意图是创建一个Config实例, 我们可以修改parse_config从一个普通的函数成new命名的函数和Config结构体关联. 做完这个修改让代码更加通常. 我们可以创建一个标准库的实例, 如 String, 调用 String::new, 相似的, 修改parse_config 成new 函数和Config关联, 我们可以创建Config的实例, 通过调用Config::new , 列表 12-7 展示了我们需要的修改.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::env;
+use std::fs;
+
+fn main() {
+    let args: Vec<String> = env::args().collect();
+
+    let config = Config::new(&args);
+
+    println!("Searching for {}", config.query);
+    println!("In file {}", config.filename);
+
+    let contents = fs::read_to_string(config.filename)
+        .expect("Something went wrong reading the file");
+
+    println!("With text:\n{}", contents);
+
+    // --snip--
+}
+
+// --snip--
+
+struct Config {
+    query: String,
+    filename: String,
+}
+
+impl Config {
+    fn new(args: &[String]) -> Config {
+        let query = args[1].clone();
+        let filename = args[2].clone();
+
+        Config { query, filename }
+    }
+}
+#+end_src
+代码 12-7: 修改parse_config 到 Config::new
+我们更新完main我们之前调用parse_config的地方成调用Config::new. 我们修改parse_config成new然后移动到impl块里, 这让Config关联上new函数, 尝试再次编译代码确保它正常.
+
+*** 修正错误处理
+现在我们修正我们的错误处理. 如果向量包含少于3个元素重新调用尝试访问vector和索引1或者索引2将导致程序恐慌. 尝试没有参数运行程序; 它将是这样:
+#+begin_src shell
+$ cargo run
+   Compiling minigrep v0.1.0 (file:///projects/minigrep)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.0s
+     Running `target/debug/minigrep`
+thread 'main' panicked at 'index out of bounds: the len is 1 but the index is 1', src/main.rs:27:21
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+#+end_src
+
+这一行 index out of bounds: the len is 1 buf the index if 1 对程序员来说是一个错误消息. 它不能帮助我们的最终用户理解发生了什么以及他们应该怎么做. 现在让我们修正.
+
+*** 优化错误消息
+在代码 12-8里, 我们在new函数增加了检查,将会验证切片在访问索引1和2的时候足够长. 如果切片没有足够长,程序恐慌然后显示比index out of bounds 更好的错误消息.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::env;
+use std::fs;
+
+fn main() {
+    let args: Vec<String> = env::args().collect();
+
+    let config = Config::new(&args);
+
+    println!("Searching for {}", config.query);
+    println!("In file {}", config.filename);
+
+    let contents = fs::read_to_string(config.filename)
+        .expect("Something went wrong reading the file");
+
+    println!("With text:\n{}", contents);
+}
+
+struct Config {
+    query: String,
+    filename: String,
+}
+
+impl Config {
+    // --snip--
+    fn new(args: &[String]) -> Config {
+        if args.len() < 3 {
+            panic!("not enough arguments");
+        }
+        // --snip--
+
+        let query = args[1].clone();
+        let filename = args[2].clone();
+
+        Config { query, filename }
+    }
+}
+#+end_src
+代码 12-8: 添加参数数量的检查
+
+这段代码,当value参数超出有效值的范围我们调用panic!的地方和我们编写的代码9-10里Guess::new的代码很像. 对应的在这里检查值的范围, 我们检查args的长度至少是3然后函数的剩余部分操作可以假定这个条件符合. 如果args只有少于3个元素, 这里的条件将会是真, 然后我们将调用panic!宏立即结束程序运行.
+
+在new里面有了这些额外的代码的几行, 让我们不给参数重新运行程序看现在的错误长什么样:
+#+begin_src shell
+$ cargo run
+   Compiling minigrep v0.1.0 (file:///projects/minigrep)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.0s
+     Running `target/debug/minigrep`
+thread 'main' panicked at 'not enough arguments', src/main.rs:26:13
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+#+end_src
+
+输出很好: 我们现在有了一个人性化的错误消息. 然而我们仍然有不相关和消息,我们不想给到我们的用户. 也许我们使用在代码 9-13里用过的技术在这里不是最好的: 对于程序员来说调用一个panic!比一个使用问题更加合适, 就像第9章讨论的. 相对的我们可以使用在第9章里学到的其它技术--返回一个Result指出成功或者是一个错误.
+*** 从new里面返回Result而非调用panic!
+我们可以坚持当成功的情况下返回包含Config实例的Result值然后出错的时候可以表达具体的问题. 当Config::new和main联系起来以后, 我们可以使用Result类型示意这里有一个问题. 然后我们可以修改main为我们的用户转化一个Err变体成一个更实际的错误而非围绕着关于 thread 'main' 和 RUST_BACKTRACE然后调用panic!.
+
+代码 12-9 展示我们需要做的config::new返回值的修改和函数体需要返回一个Result. 注意, 我们修改main之前代码不能被编译, 我们将在下一段代码里做这些.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::env;
+use std::fs;
+
+fn main() {
+    let args: Vec<String> = env::args().collect();
+
+    let config = Config::new(&args);
+
+    println!("Searching for {}", config.query);
+    println!("In file {}", config.filename);
+
+    let contents = fs::read_to_string(config.filename)
+        .expect("Something went wrong reading the file");
+
+    println!("With text:\n{}", contents);
+}
+
+struct Config {
+    query: String,
+    filename: String,
+}
+
+impl Config {
+    fn new(args: &[String]) -> Result<Config, &str> {
+        if args.len() < 3 {
+            return Err("not enough arguments");
+        }
+
+        let query = args[1].clone();
+        let filename = args[2].clone();
+
+        Ok(Config { query, filename })
+    }
+}
+#+end_src
+代码 12-9: 从Config::new返回一个Result
+
+现在成功情况下我们的new方法返回一个带有Config实例的Result, 错误情况下返回 &str .
+
+在new函数里我作做了两个修改: 当用户没有传递足够的参数时不调用panic!, 我们返回一个Err值, 而且我们在一个Ok里包装了Config返回值. 这些修改让函数符合了new类型的签名.
+
+从config::new里面返回一个Err值允许main函数处理从new方法返回的Result值并且在出错的时候更加清晰的退出进程.
+
+*** 调用Config::new 和 处理错误
+处理错误情况输出人性化的消息, 我们需要更新main处理Config::new返回的Reuslt, 就像代码12-10展示的, 我们也将负责从panic!带非0错误值退出命令行工具然后手动实现它. 一个非0退出状态码是一个信号约定调用我们程序的进程在一个错误的状态下退出.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::env;
+use std::fs;
+use std::process;
+
+fn main() {
+    let args: Vec<String> = env::args().collect();
+
+    let config = Config::new(&args).unwrap_or_else(|err| {
+        println!("Problem parsing arguments: {}", err);
+        process::exit(1);
+    });
+
+    // --snip--
+
+    println!("Searching for {}", config.query);
+    println!("In file {}", config.filename);
+
+    let contents = fs::read_to_string(config.filename)
+        .expect("Something went wrong reading the file");
+
+    println!("With text:\n{}", contents);
+}
+
+struct Config {
+    query: String,
+    filename: String,
+}
+
+impl Config {
+    fn new(args: &[String]) -> Result<Config, &str> {
+        if args.len() < 3 {
+            return Err("not enough arguments");
+        }
+
+        let query = args[1].clone();
+        let filename = args[2].clone();
+
+        Ok(Config { query, filename })
+    }
+}
+#+end_src
+代码 12-10: 如果创建Config失败.带着错误码退出
+
+在这段代码里, 我们使用了一个我们还没有详情说明的方法: unwrap_or_else, 它在Reuslt<T, E> 里被标准库定义. 使用 unwrap_or_else 允计我们定义一些自定义行为, 非panic!错误处理. 如果Result是一个Ok值, 方法的行为和unwrap一样: 它返回ok包裹的内在值. 然而, 如果值是一个Err值, 这个方法调用必包里的代码, 这是我们定义的匿名方法然后作为一个参数传递给unwrap_or_else. 我们将在13章深入必包. 现在, 你仅仅需要知道 unwrap_or_else 将传递Err的内在的的值, 这种情况下它是静态字符串 "not enough arguments" 我们在代码12-9里面加入的, 对于我们的必包出现在竖线之间的参数err. 运行的时候必包里的代码可以使用err值.
+
+我们添加了新的use行从标准库引入process到作用域. 错误情况下将要运行的必包里的代码只有两行: 我们输出err值, 然后调用process::exit. process::exit函数将立即终止程序然后返回我们作为退出码传递的数字. 这和panic!相似-基于在代码12-8里的我们使用的基本错误处理, 但是我们不再获得额外的输出, 我们试试:
+#+begin_src shell
+$ cargo run
+   Compiling minigrep v0.1.0 (file:///projects/minigrep)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.48s
+     Running `target/debug/minigrep`
+Problem parsing arguments: not enough arguments
+#+end_src
+
+很好! 对于我们的用户输出更加友好了.
+
+*** 从main里抽离额外逻辑
+现在我们完成了配置解析的重构, 让我们返回应用程序逻辑. 当我们申明二进制项目分离的关注点时, 我们抽出一个叫run的函数包含了当前在main函数里所有的逻辑, 这不涉及设置配置或者处理错误. 当我们做完, main将变得简单易于验证, 然后我们将对于所有其它的逻辑编写测试.
+
+代码 12-11 展示了抽离出的run函数, 目前, 我们仅仅做了小的修改, 继续优化存在的函数. 我们仍然在 src/main.rs 里定义函数.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::env;
+use std::fs;
+use std::process;
+
+fn main() {
+    // --snip--
+
+    let args: Vec<String> = env::args().collect();
+
+    let config = Config::new(&args).unwrap_or_else(|err| {
+        println!("Problem parsing arguments: {}", err);
+        process::exit(1);
+    });
+
+    println!("Searching for {}", config.query);
+    println!("In file {}", config.filename);
+
+    run(config);
+}
+
+fn run(config: Config) {
+    let contents = fs::read_to_string(config.filename)
+        .expect("Something went wrong reading the file");
+
+    println!("With text:\n{}", contents);
+}
+
+// --snip--
+
+struct Config {
+    query: String,
+    filename: String,
+}
+
+impl Config {
+    fn new(args: &[String]) -> Result<Config, &str> {
+        if args.len() < 3 {
+            return Err("not enough arguments");
+        }
+
+        let query = args[1].clone();
+        let filename = args[2].clone();
+
+        Ok(Config { query, filename })
+    }
+}
+#+end_src
+代码 12-11: 抽离一个run函数包含程序剩余的逻辑
+
+现在run函数包含了所有保留在main里的逻辑, 开始读文件. run函数接收Config实例作为参数.
+
+*** 从run函数返回错误
+随着保留的程序逻辑被拆分到run函数, 我们可以提升错误处理. 你像我们在代码 12-9 里Config::new里做的. 当出错的时候与其让程序调用expect产生恐慌, 不如run函数返回一个Result<T, E> . 这将让我们更加巩固main的逻辑用一种用户友好的方法围绕着错误处理. 代码 12-12 展示我们需要做的run里面的签名的修改.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::env;
+use std::fs;
+use std::process;
+use std::error::Error;
+
+// --snip--
+
+
+fn main() {
+    let args: Vec<String> = env::args().collect();
+
+    let config = Config::new(&args).unwrap_or_else(|err| {
+        println!("Problem parsing arguments: {}", err);
+        process::exit(1);
+    });
+
+    println!("Searching for {}", config.query);
+    println!("In file {}", config.filename);
+
+    run(config);
+}
+
+fn run(config: Config) -> Result<(), Box<dyn Error>> {
+    let contents = fs::read_to_string(config.filename)?;
+
+    println!("With text:\n{}", contents);
+
+    Ok(())
+}
+
+struct Config {
+    query: String,
+    filename: String,
+}
+
+impl Config {
+    fn new(args: &[String]) -> Result<Config, &str> {
+        if args.len() < 3 {
+            return Err("not enough arguments");
+        }
+
+        let query = args[1].clone();
+        let filename = args[2].clone();
+
+        Ok(Config { query, filename })
+    }
+}
+#+end_src
+代码 12-12: 修改run函数返回Result
+
+在这里我们修改三处签名. 首先, 我们改变了run函数的返回类型成Reuslt<(),Box<dyn Error>>. 这个函数之前返回单位类型, (), 和我们保留了它在ok箱子里的返回值.
+
+对于错误类型, 我们使用特征对象 Box<dyn Error>(我们在顶部使用use语句引入了 std::error:Error到当前作用域). 我们将在17章详深入特征对象. 现在, 仅仅知道 Box<dyn Error> 意味着函数可以返回一个实现Error特征的类型, 但是我们没有指定返回值将会是什么具体的类型. 在不同的错误情况下这给我们灵活性返回不同类型的错误值. dyn关键字是 "dynamic" 的简短形式.
+
+其次, 我们去除了调用expect而是使用问号操作符, 就像我们在第9章讨论的. 而不是当错误时panic!, ? 将返回对于调用者需要处理的来自当前函数的错误值.
+
+再次, 成功的时候run函数现在返回一个Ok值. 我们在签名里定义了run函数成功类型为(), 这意味着我们需要在Ok值里包裹单位类型值. Ok(()) 语法起初可能看起来有点奇怪, 但是使用() 好像是惯例以表明我们仅仅当它有效的时候调用run;它不返回我们需要的一个值.
+
+当你运行这段代码, 它将编译但是显示一个警告
+#+begin_src shell
+$ cargo run the poem.txt
+   Compiling minigrep v0.1.0 (file:///projects/minigrep)
+warning: unused `Result` that must be used
+  --> src/main.rs:19:5
+   |
+19 |     run(config);
+   |     ^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_must_use)]` on by default
+   = note: this `Result` may be an `Err` variant, which should be handled
+
+warning: `minigrep` (bin "minigrep") generated 1 warning
+    Finished dev [unoptimized + debuginfo] target(s) in 0.71s
+     Running `target/debug/minigrep the poem.txt`
+Searching for the
+In file poem.txt
+With text:
+I'm nobody! Who are you?
+Are you nobody, too?
+Then there's a pair of us - don't tell!
+They'd banish us, you know.
+
+How dreary to be somebody!
+How public, like a frog
+To tell your name the livelong day
+To an admiring bog!
+#+end_src
+
+rust告诉我们我们的代码忽略了Result值而且Result值可能指明一个错误的发生. 但是我们并没有检查是否这里有一个错误, 编译器提醒我们可能意味着这里需要错误处理代码! 让我们现在纠正这个问题.
+*** 处理来自main的错误
+我们将使用一个技术处理错误,就像之前在代码12-10里使用过的, 但是稍微有点不同.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::env;
+use std::error::Error;
+use std::fs;
+use std::process;
+
+fn main() {
+    // --snip--
+
+    let args: Vec<String> = env::args().collect();
+
+    let config = Config::new(&args).unwrap_or_else(|err| {
+        println!("Problem parsing arguments: {}", err);
+        process::exit(1);
+    });
+
+    println!("Searching for {}", config.query);
+    println!("In file {}", config.filename);
+
+    if let Err(e) = run(config) {
+        println!("Application error: {}", e);
+
+        process::exit(1);
+    }
+}
+
+fn run(config: Config) -> Result<(), Box<dyn Error>> {
+    let contents = fs::read_to_string(config.filename)?;
+
+    println!("With text:\n{}", contents);
+
+    Ok(())
+}
+
+struct Config {
+    query: String,
+    filename: String,
+}
+
+impl Config {
+    fn new(args: &[String]) -> Result<Config, &str> {
+        if args.len() < 3 {
+            return Err("not enough arguments");
+        }
+
+        let query = args[1].clone();
+        let filename = args[2].clone();
+
+        Ok(Config { query, filename })
+    }
+}
+#+end_src
+我们使用 if let 而不是unwrap_or_else 检查run是否返回了一个Err值,如果有的话调用process::exit(1) ,run函数不返回一个我们用unwrap包裹的和config::new返回的Config实例一样的值,因为成功的时候run返回(), 我们只关心错误, 所有我们不需要unwrap_or_else来返回被解包的值, 因为它仅仅是().
+
+if let的主体和unwrap_or_else函数在两种情况下是一样的: 我们输出错误和退出.
+
+*** 拆分代码到一个Crate库
+目前为止我们的minigrep项目看起来很好!现在我们拆分src/main.rs文件然后一些代码放到src/lib.rs文件, 我们可以测试它和有一个一小部分信赖的 src/main.rs文件.
+
+我们移动除了main函数以外的代码从 src/main.rs 到 src/lib..rs.
+
++ run函数的定义
++ 相关的use语句
++ Config的定义
++ :Config:new的定义
+
+src/lib.rs的内容直接在代码12-13里面显示(为了简洁我们省略了方法体). 在修改 src/main.rs 之前这些代码将不能编译如 12-14
+文件名: src/lib.rs
+#+begin_src rust
+use std::error::Error;
+use std::fs;
+
+pub struct Config {
+    pub query: String,
+    pub filename: String,
+}
+
+impl Config {
+    pub fn new(args: &[String]) -> Result<Config, &str> {
+        // --snip--
+        if args.len() < 3 {
+            return Err("not enough arguments");
+        }
+
+        let query = args[1].clone();
+        let filename = args[2].clone();
+
+        Ok(Config { query, filename })
+    }
+}
+
+pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
+    // --snip--
+    let contents = fs::read_to_string(config.filename)?;
+
+    println!("With text:\n{}", contents);
+
+    Ok(())
+}
+#+end_src
+代码 12-13: 移动 Config和 run到 src/lib.rs
+
+我们自由的使用了pub关键字: 在Config上, 它的字段和new 方法, 和run函数. 我们现在有了一个crate库有我们可以测试的公众API!
+
+现在在src/main.rs里,我们需要引入我们移动到 src/lib.rs里面的代码到二进制库的当前作用域, 如代码 12-14.
+文件名: src/main.rs
+#+begin_src rust
+use std::env;
+use std::process;
+
+use minigrep::Config;
+
+fn main() {
+    // --snip--
+    let args: Vec<String> = env::args().collect();
+
+    let config = Config::new(&args).unwrap_or_else(|err| {
+        println!("Problem parsing arguments: {}", err);
+        process::exit(1);
+    });
+
+    println!("Searching for {}", config.query);
+    println!("In file {}", config.filename);
+
+    if let Err(e) = minigrep::run(config) {
+        // --snip--
+        println!("Application error: {}", e);
+
+        process::exit(1);
+    }
+}
+#+end_src
+代码 12-14: 在src/main.rs里使用minigrep crate库
+
+我们添加 use minigrep::Config 来从crate库引入Config类型到二进制作用域, 在我们的作用域里run函数添加了前缀. 现在所有的功能都被联系起来了而且应该可以正常运作. 使用cargo run 运行程序确保一切正常运作.
+
+作了很多的工作, 但是我们已经为将来的成功做好了准备. 现在可以更加容易的进行错误处理, 我们让代码更加模块化. 几乎所有我们的工作将在 src/lib.rs里完成.
+
+对比使用老代码做一些事情可能很因难,让我们采用新发现的模块化带来的优点, 但是新代码这将容易很多: 我们将写一些测试!
+
+** 使用测试驱动开发库功能
+现在我们已经抽离逻辑到 src/lib.rs而且在src/main.rs里保留了参数收集和错误处理, 为我们的代码的核心功能编写测试变得更加容易. 我们可以直接传递多个参数调用我们的函数然后检查它们的返回值, 而不用从命令行调用我们的二进制. 用自己的方法自由的编写在Config::new和run函数里的功能的一些测试.
+
+在这一节里, 我们将使用测试驱动(TDD)给minigrep程序添加搜索逻辑. 这个软件开发技术包含以下步骤:
+	1. 编写一个失败的测试然后运行确保它按照你期望的原因失败
+	2. 编写或者修改尽可以少的代码让新的测试通过
+	3. 重构你添加或者修改的代码让测试继续通过
+	4. 从第1步重复!
+这个流程只是写软件的很多方式中的一种, 但是TDD也可以帮助驱动代码设计. 通过这个流程, 写代码之前写测试然后让测试通过可以辅助高测试覆盖率.
+
+我们将测试功能实现的驱动这将在文件里确实的搜索查询字符串然后产生匹配查询字符串的行的列表. 我们将添加这些功能在一个叫search的函数里.
+
+*** 编写失败的测试
+因为我们再也不需要它了,让我们从src/lib.rs 和 src/main.rs里去掉之前用于检查程序表现的 println! 语句. 然后 在src/lib.rs, 我们添加一个 tests 模块和一个测试函数, 就像我们之前在11章做的. 测试函数指定我们想要 search函数有的行为: 它接收一个查询和用来查询的搜索文本, 然后仅仅返回来自包含查询的文本的行. 代码 12-15 展示了一这个测试,现在还编译不了.
+
+文件名: src/lib.rs
+#+begin_src rust
+use std::error::Error;
+use std::fs;
+
+pub struct Config {
+    pub query: String,
+    pub filename: String,
+}
+
+impl Config {
+    pub fn new(args: &[String]) -> Result<Config, &str> {
+        if args.len() < 3 {
+            return Err("not enough arguments");
+        }
+
+        let query = args[1].clone();
+        let filename = args[2].clone();
+
+        Ok(Config { query, filename })
+    }
+}
+
+pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
+    let contents = fs::read_to_string(config.filename)?;
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_result() {
+        let query = "duct";
+        let contents = "\
+Rust:
+safe, fast, productive.
+Pick three.";
+
+        assert_eq!(vec!["safe, fast, productive."], search(query, contents));
+    }
+}
+#+end_src
+代码: 12-15 为我们希望的search函数创建失败的测试
+
+这个测试查询字符串"duct". 我们搜索的文本只有三行, 其中只有一行包含"duct"(注意双引号后的反斜线告诉rust在这个字符串字面量内容的开始不要放置一个换行字符). 我们假设从search 函数返回的值仅仅包含我们期望的行.
+
+我们不能运行且看到它的失败, 因为这个测试甚至不能编译: search函数还不存在! 所以现在我们添加足够的代码让测试可以编译和运行 通过添加一个总是返回一个空向量的search函数的定义, 如代码 12-16. 然后测试应该正常编译然后失败因为空向量不匹配包含"safe,fast,productive"的行的向量
+
+文件名: src/lib.rs
+#+begin_src rust
+use std::error::Error;
+use std::fs;
+
+pub struct Config {
+    pub query: String,
+    pub filename: String,
+}
+
+impl Config {
+    pub fn new(args: &[String]) -> Result<Config, &str> {
+        if args.len() < 3 {
+            return Err("not enough arguments");
+        }
+
+        let query = args[1].clone();
+        let filename = args[2].clone();
+
+        Ok(Config { query, filename })
+    }
+}
+
+pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
+    let contents = fs::read_to_string(config.filename)?;
+
+    Ok(())
+}
+
+pub fn search<'a>(query: &str, contents: &'a str) -> Vec<&'a str> {
+    vec![]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_result() {
+        let query = "duct";
+        let contents = "\
+Rust:
+safe, fast, productive.
+Pick three.";
+
+        assert_eq!(vec!["safe, fast, productive."], search(query, contents));
+    }
+}
+#+end_src
+代码 12-16: 定义足够少的 search函数让我们的测试能够编译
+
+注意我们需要一个定义在 search 签名的明确生命周期 'a 然后使用到 contents参数和返回值. 回顾第10章生命周期参数指定哪个参数的生命周期绑定到返回值的生命周期. 这种情况下,我们指出返回的向量应该包含字符串切片引用到参数contents切片(而非参数query).
+
+换句话说, 我们告诉rust, search函数返回的数据将会活得和在contents参数传递到 search函数里的数据一样久. 这很重要!切片引用的数据需要有效以保证引用有效; 如果编译器假定我们制造字符串切片query而不是contents, 这将会导致它的安全检查出错.
+
+如果我们忘记生命周期申明尝试编译这个函数, 我们将看到这个错误:
+#+begin_src shell
+$ cargo build
+   Compiling minigrep v0.1.0 (file:///projects/minigrep)
+error[E0106]: missing lifetime specifier
+  --> src/lib.rs:28:51
+   |
+28 | pub fn search(query: &str, contents: &str) -> Vec<&str> {
+   |                      ----            ----         ^ expected named lifetime parameter
+   |
+   = help: this function's return type contains a borrowed value, but the signature does not say whether it is borrowed from `query` or `contents`
+help: consider introducing a named lifetime parameter
+   |
+28 | pub fn search<'a>(query: &'a str, contents: &'a str) -> Vec<&'a str> {
+   |              ^^^^        ^^^^^^^            ^^^^^^^         ^^^
+
+For more information about this error, try `rustc --explain E0106`.
+error: could not compile `minigrep` due to previous error
+#+end_src
+
+rust不可能知道我们需要两个参数的哪一个, 所以我们需要告诉它. 因为contents是包含了所有我们的文本的参数而且我们想要返回匹配的部分, 我们知道contents是应该用生命周期语法关联到返回值的参数.
+
+其它的编程语言不需要你在签名里去关联参数到返回值. 虽然这可能看起来很奇怪, 时间久了可能容易些. 你可能想要把这个例子和第10章的"有生命周期的有效引用"比较.
+
+现在让我们运行测试:
+#+begin_src shell
+$ cargo test
+   Compiling minigrep v0.1.0 (file:///projects/minigrep)
+    Finished test [unoptimized + debuginfo] target(s) in 0.97s
+     Running unittests (target/debug/deps/minigrep-9cd200e5fac0fc94)
+
+running 1 test
+test tests::one_result ... FAILED
+
+failures:
+
+---- tests::one_result stdout ----
+thread 'main' panicked at 'assertion failed: `(left == right)`
+  left: `["safe, fast, productive."]`,
+ right: `[]`', src/lib.rs:44:9
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::one_result
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass '--lib'
+#+end_src
+很好, 和我们想的一样, 测试失败了.让我们使测试通过!
+
+*** 编写代码让测试通过
+现在, 因为我们总是返回一个空向量我们的测试失败了.修正它实现search, 我们的程序需要以下步骤:
++ 迭代内容的每一行.
++ 检查行是否匹配我们的查询字符串
++ 如果匹配, 添加到我们将要返回的值的列表里
++ 如果不匹配, 啥也不做
++ 返回匹配的结果的列表
+
+让我们一步步来, 开始迭代每一行.
+**** 使用 lines 方法迭代每行
+rust有一个很有用的方法方便的一行一行的处理字符串,叫作 lines, 它运作得很好 如代码 12-17. 注意这还编译不了.
+
+文件名: src/lib.rs
+#+begin_src rust
+use std::error::Error;
+use std::fs;
+
+pub struct Config {
+    pub query: String,
+    pub filename: String,
+}
+
+impl Config {
+    pub fn new(args: &[String]) -> Result<Config, &str> {
+        if args.len() < 3 {
+            return Err("not enough arguments");
+        }
+
+        let query = args[1].clone();
+        let filename = args[2].clone();
+
+        Ok(Config { query, filename })
+    }
+}
+
+pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
+    let contents = fs::read_to_string(config.filename)?;
+
+    Ok(())
+}
+
+pub fn search<'a>(query: &str, contents: &'a str) -> Vec<&'a str> {
+    for line in contents.lines() {
+        // do something with line
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_result() {
+        let query = "duct";
+        let contents = "\
+Rust:
+safe, fast, productive.
+Pick three.";
+
+        assert_eq!(vec!["safe, fast, productive."], search(query, contents));
+    }
+}
+#+end_src
+代码 12-17: 在contents里迭代每一行
+
+lines 方法返回一个迭代器. 我们将在13章深入讨论迭代器, 但是回顾在代码3-5里见过的这种使用迭代器的方式, 我们用一个迭代器使用for循环的地方, 在一个集合里的每一行运行一些代码.
+
+**** 搜索每一行
+接下来, 我们检查当前行是否匹配我们的查询字符串. 刚好, 字符串有一个有用的方法叫 contains 为我们做这些! 在search函数里添加一个contains的调用, 如代码 12-18. 注意这还编译不了.
+
+文件名: src/lib.rs
+#+begin_src rust
+use std::error::Error;
+use std::fs;
+
+pub struct Config {
+    pub query: String,
+    pub filename: String,
+}
+
+impl Config {
+    pub fn new(args: &[String]) -> Result<Config, &str> {
+        if args.len() < 3 {
+            return Err("not enough arguments");
+        }
+
+        let query = args[1].clone();
+        let filename = args[2].clone();
+
+        Ok(Config { query, filename })
+    }
+}
+
+pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
+    let contents = fs::read_to_string(config.filename)?;
+
+    Ok(())
+}
+
+pub fn search<'a>(query: &str, contents: &'a str) -> Vec<&'a str> {
+    for line in contents.lines() {
+        if line.contains(query) {
+            // do something with line
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_result() {
+        let query = "duct";
+        let contents = "\
+Rust:
+safe, fast, productive.
+Pick three.";
+
+        assert_eq!(vec!["safe, fast, productive."], search(query, contents));
+    }
+}
+#+end_src
+代码 12-18: 添加查看是否在query里行包含字符串的功能
+
+**** 保留匹配的行
+我们也需要一种方式来保存包含我们查询字符串的行. 为此, 我们在for循环前面创造了一个可变向量然后在向量里调用push方法保存行. for循环结束以后, 我们返回向量, 如代码 12-19.
+
+文件名: src/lib.rs
+#+begin_src rust
+use std::error::Error;
+use std::fs;
+
+pub struct Config {
+    pub query: String,
+    pub filename: String,
+}
+
+impl Config {
+    pub fn new(args: &[String]) -> Result<Config, &str> {
+        if args.len() < 3 {
+            return Err("not enough arguments");
+        }
+
+        let query = args[1].clone();
+        let filename = args[2].clone();
+
+        Ok(Config { query, filename })
+    }
+}
+
+pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
+    let contents = fs::read_to_string(config.filename)?;
+
+    Ok(())
+}
+
+pub fn search<'a>(query: &str, contents: &'a str) -> Vec<&'a str> {
+    let mut results = Vec::new();
+
+    for line in contents.lines() {
+        if line.contains(query) {
+            results.push(line);
+        }
+    }
+
+    results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_result() {
+        let query = "duct";
+        let contents = "\
+Rust:
+safe, fast, productive.
+Pick three.";
+
+        assert_eq!(vec!["safe, fast, productive."], search(query, contents));
+    }
+}
+#+end_src
+代码 12-19: 保存匹配的行以至于我们可以返回它们
+
+现在search函数应该只返回包含query的行, 而且我们的测试应该可以通过. 让我们运行测试:
+#+begin_src shell
+$ cargo test
+   Compiling minigrep v0.1.0 (file:///projects/minigrep)
+    Finished test [unoptimized + debuginfo] target(s) in 1.22s
+     Running unittests (target/debug/deps/minigrep-9cd200e5fac0fc94)
+
+running 1 test
+test tests::one_result ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests (target/debug/deps/minigrep-9cd200e5fac0fc94)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests minigrep
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+#+end_src
+
+我们的测试通过了, 所以我们知道它正常运作!
+
+在这一点上,当测试通过维护相同功能的时候, 我们应该考虑重构搜索函数的实现的可能. 在搜索函数里的代码不算太坏, 但是它没有迭代器的一些有用的优点. 我们将在13章回到这个例子,我们将详细深入迭代器, 然后看到如何改进它.
+
+**** 在run函数里使用搜索函数
+现在search函数正常运作且测试通过, 我们需要从run函数里调用search. 我们需要传递config.query值和run从文件读取的contents到 search函数. 然后run将输出从search返回的每一行:
+文件名: src/lib.rs
+#+begin_src rust
+use std::error::Error;
+use std::fs;
+
+pub struct Config {
+    pub query: String,
+    pub filename: String,
+}
+
+impl Config {
+    pub fn new(args: &[String]) -> Result<Config, &str> {
+        if args.len() < 3 {
+            return Err("not enough arguments");
+        }
+
+        let query = args[1].clone();
+        let filename = args[2].clone();
+
+        Ok(Config { query, filename })
+    }
+}
+
+pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
+    let contents = fs::read_to_string(config.filename)?;
+
+    for line in search(&config.query, &contents) {
+        println!("{}", line);
+    }
+
+    Ok(())
+}
+
+pub fn search<'a>(query: &str, contents: &'a str) -> Vec<&'a str> {
+    let mut results = Vec::new();
+
+    for line in contents.lines() {
+        if line.contains(query) {
+            results.push(line);
+        }
+    }
+
+    results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_result() {
+        let query = "duct";
+        let contents = "\
+Rust:
+safe, fast, productive.
+Pick three.";
+
+        assert_eq!(vec!["safe, fast, productive."], search(query, contents));
+    }
+}
+#+end_src
+我们依然使用一个for循环返回来自 search的每一行然后输出.
+
+现在整个程序应该正常运作! 让我们试试, 首先用一个从Emily Dickinson诗里应该返回的准准确的一行, "frog":
+#+begin_src shell
+$ cargo run frog poem.txt
+   Compiling minigrep v0.1.0 (file:///projects/minigrep)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.38s
+     Running `target/debug/minigrep frog poem.txt`
+How public, like a frog
+#+end_src
+很好! 让我们试试匹配多行的一个词, 比如"body":
+#+begin_src shell
+$ cargo run body poem.txt
+   Compiling minigrep v0.1.0 (file:///projects/minigrep)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.0s
+     Running `target/debug/minigrep body poem.txt`
+I'm nobody! Who are you?
+Are you nobody, too?
+How dreary to be somebody!
+#+end_src
+
+最后, 让我们确保当我们搜索一个在诗的任何地方都不出现的词,我们不会得到任何行, 比如 "monomorphization":
+#+begin_src shell
+$ cargo run monomorphization poem.txt
+   Compiling minigrep v0.1.0 (file:///projects/minigrep)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.0s
+     Running `target/debug/minigrep monomorphization poem.txt`
+#+end_src
+
+很好! 我们构建了我们自己的经典工具的最小版本和学会了很多关于如何组织应用程序. 我们也学习了一点关于文件输入输出, 生命周期, 测试, 和命令行解析.
+
+完善这个项目, 我们将简短的说明如何和环境变量一起运作和如何输出标准错误,当你写控制台应用程序的时候这两者都很有用.
+
+** 使用环境变量
+我们将改进minigrep添加一个额外的功能: 一个大小写搜索敏感的选项用户可以通过环境变量打开它. 我们可以制造这个功能一个命令行选项和需要用户进入每次他们想要的设置, 但相对的我们将使用一个环境变量. 做完这些我们的用户设置一次环境变量然后在终端会话里所有的搜索将变成大小写敏感.
+
+**** 为大小写搜索函数写一个失败的测试
+我们想要添加一个新的 search_case_insensitive 函数, 当环境变量打开的时候调用它. 我们将继续TDD流程, 所以第一步再次写一个失败的测试. 我们将为新的search_case_insensitive 函数添加一个新的测试然后重命名我们的旧测试从 one_result 到 case_sensitive来清楚的区分两个测试, 如代码 12-20.
+
+文件名: src/lib.rs
+#+begin_src rust
+use std::error::Error;
+use std::fs;
+
+pub struct Config {
+    pub query: String,
+    pub filename: String,
+}
+
+impl Config {
+    pub fn new(args: &[String]) -> Result<Config, &str> {
+        if args.len() < 3 {
+            return Err("not enough arguments");
+        }
+
+        let query = args[1].clone();
+        let filename = args[2].clone();
+
+        Ok(Config { query, filename })
+    }
+}
+
+pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
+    let contents = fs::read_to_string(config.filename)?;
+
+    for line in search(&config.query, &contents) {
+        println!("{}", line);
+    }
+
+    Ok(())
+}
+
+pub fn search<'a>(query: &str, contents: &'a str) -> Vec<&'a str> {
+    let mut results = Vec::new();
+
+    for line in contents.lines() {
+        if line.contains(query) {
+            results.push(line);
+        }
+    }
+
+    results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn case_sensitive() {
+        let query = "duct";
+        let contents = "\
+Rust:
+safe, fast, productive.
+Pick three.
+Duct tape.";
+
+        assert_eq!(vec!["safe, fast, productive."], search(query, contents));
+    }
+
+    #[test]
+    fn case_insensitive() {
+        let query = "rUsT";
+        let contents = "\
+Rust:
+safe, fast, productive.
+Pick three.
+Trust me.";
+
+        assert_eq!(
+            vec!["Rust:", "Trust me."],
+            search_case_insensitive(query, contents)
+        );
+    }
+}
+#+end_src
+代码 12-20: 为我们将要添加的大小写不敏感函数添加一个失败的测试
+
+注意我们也编辑旧的测试 ccontents. 我们将用文本 "Duct tape."添加一个新行使用首字母大小的D 这样当我们用大小写敏感搜索的时候就不会匹配查询 "duct". 用这种方式修改老的测试确保我们不破坏我们已经实现了的大小写敏感搜索功能. 现在测试应该可以通过然后当我们大小写敏感搜索的时候应该继续通过.
+
+大小写不敏感的新的搜索使用"rUsT"作为查询. 在我们将添加的search_case_insensitive 函数里, 查询 "rUsT" 应该匹配包含 ":Rust"的行, 使用一个大写的R匹配行 "Trust me." 即使两者从查询上有不同的大小写. 这是我们的失败测试, 而且它将会编译失败, 因为我们还没有 search_case_insensitive函数. 随意的添加一个总是返回空向量的结构的实现, 和我们代码12-16里在search函数里做的类似, 测试编译通过然后失败.
+
+*** 实现 search_case_insensitive 函数
+函数 search_case_insensitive 展示在代码 12-21里, 几乎和search函数一样. 唯一的不同是我们将把query和line转化为小写, 所以不管输入参数的大小写,当我们检查当前行是否包含查询时它们都将是相同的大小写.
+
+文件名: src/lib.rs
+#+begin_src rust
+use std::error::Error;
+use std::fs;
+
+pub struct Config {
+    pub query: String,
+    pub filename: String,
+}
+
+impl Config {
+    pub fn new(args: &[String]) -> Result<Config, &str> {
+        if args.len() < 3 {
+            return Err("not enough arguments");
+        }
+
+        let query = args[1].clone();
+        let filename = args[2].clone();
+
+        Ok(Config { query, filename })
+    }
+}
+
+pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
+    let contents = fs::read_to_string(config.filename)?;
+
+    for line in search(&config.query, &contents) {
+        println!("{}", line);
+    }
+
+    Ok(())
+}
+
+pub fn search<'a>(query: &str, contents: &'a str) -> Vec<&'a str> {
+    let mut results = Vec::new();
+
+    for line in contents.lines() {
+        if line.contains(query) {
+            results.push(line);
+        }
+    }
+
+    results
+}
+
+pub fn search_case_insensitive<'a>(
+    query: &str,
+    contents: &'a str,
+) -> Vec<&'a str> {
+    let query = query.to_lowercase();
+    let mut results = Vec::new();
+
+    for line in contents.lines() {
+        if line.to_lowercase().contains(&query) {
+            results.push(line);
+        }
+    }
+
+    results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn case_sensitive() {
+        let query = "duct";
+        let contents = "\
+Rust:
+safe, fast, productive.
+Pick three.
+Duct tape.";
+
+        assert_eq!(vec!["safe, fast, productive."], search(query, contents));
+    }
+
+    #[test]
+    fn case_insensitive() {
+        let query = "rUsT";
+        let contents = "\
+Rust:
+safe, fast, productive.
+Pick three.
+Trust me.";
+
+        assert_eq!(
+            vec!["Rust:", "Trust me."],
+            search_case_insensitive(query, contents)
+        );
+    }
+}
+#+end_src
+代码 12-21: 定义 search_case_insensitive函数, 在比较之前转化查询和行为小写
+
+首先, 我们将query 字符串转化为小写然后把它保存在一个相同名称的影子变量里. 在查询上调用 to_lowercase 是必需的所以不管用户查询是 "rust", "RUST","Rust" 还是"rUsT", 我们将把查询当作它好像是 "rust"然后对于大小写来说不敏感. 当 to_lowercase将处理基本unicode时, 它不是100%准确. 如果我们写一个真实的应用程序, 这里我们将做一点小的工作, 但是本节是关于环境变量,而非unicode, 所以在这里我们将不管它.
+
+注意这里query是一个String而不是字符串切片, 因为调用 to_lowercase 创建新的数据而不是引用现有数据. 查询为 "rUsT"作为一个例子: 字符串切片对我们来说不包含小写的 u 或者 t, 所以我们需要分配一个新的String包含rust. 现在当我们把query作为参数传递到contans方法,我们需要添加一个与符号因为contains的签名被定义成接收字符串切片.
+
+接下来, 在我们检查它是否包含query到所有的小写字母之前我们在每一行添加to_lowercase的调用. 现在我们把line和query转化为了小写, 不管查询的大小写是什么我们都将匹配.
+
+让我们看看这个实现是否通过测试:
+#+begin_src shell
+$ cargo test
+   Compiling minigrep v0.1.0 (file:///projects/minigrep)
+    Finished test [unoptimized + debuginfo] target(s) in 1.33s
+     Running unittests (target/debug/deps/minigrep-9cd200e5fac0fc94)
+
+running 2 tests
+test tests::case_insensitive ... ok
+test tests::case_sensitive ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests (target/debug/deps/minigrep-9cd200e5fac0fc94)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests minigrep
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+#+end_src
+很好! 通过了. 现在, 让我们从run函数里调用新的 search_case_insensitive函数. 首先, 我们将为Config结构体添加一个新的配置选项来开头大小写敏感和不敏感搜索. 添加这个字段将导致编译失败, 因为我们还没有初始化字段:
+
+文件名:src/lib.rs
+#+begin_src rust
+use std::error::Error;
+use std::fs;
+
+pub struct Config {
+    pub query: String,
+    pub filename: String,
+    pub case_sensitive: bool,
+}
+
+impl Config {
+    pub fn new(args: &[String]) -> Result<Config, &str> {
+        if args.len() < 3 {
+            return Err("not enough arguments");
+        }
+
+        let query = args[1].clone();
+        let filename = args[2].clone();
+
+        Ok(Config { query, filename })
+    }
+}
+
+pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
+    let contents = fs::read_to_string(config.filename)?;
+
+    let results = if config.case_sensitive {
+        search(&config.query, &contents)
+    } else {
+        search_case_insensitive(&config.query, &contents)
+    };
+
+    for line in results {
+        println!("{}", line);
+    }
+
+    Ok(())
+}
+
+pub fn search<'a>(query: &str, contents: &'a str) -> Vec<&'a str> {
+    let mut results = Vec::new();
+
+    for line in contents.lines() {
+        if line.contains(query) {
+            results.push(line);
+        }
+    }
+
+    results
+}
+
+pub fn search_case_insensitive<'a>(
+    query: &str,
+    contents: &'a str,
+) -> Vec<&'a str> {
+    let query = query.to_lowercase();
+    let mut results = Vec::new();
+
+    for line in contents.lines() {
+        if line.to_lowercase().contains(&query) {
+            results.push(line);
+        }
+    }
+
+    results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn case_sensitive() {
+        let query = "duct";
+        let contents = "\
+Rust:
+safe, fast, productive.
+Pick three.
+Duct tape.";
+
+        assert_eq!(vec!["safe, fast, productive."], search(query, contents));
+    }
+
+    #[test]
+    fn case_insensitive() {
+        let query = "rUsT";
+        let contents = "\
+Rust:
+safe, fast, productive.
+Pick three.
+Trust me.";
+
+        assert_eq!(
+            vec!["Rust:", "Trust me."],
+            search_case_insensitive(query, contents)
+        );
+    }
+}
+#+end_src
+注意我们添加保存布尔的 case_sensitive字段. 然后, 我们需要run函数检查 case_sensitive的值然后使用它来决定调用 search函数还是 search_case_insensitive函数, 如代码 12-22.注意 现在仍然还不能编译.
+
+文件名: src/lib.rs
+#+begin_src rust
+use std::error::Error;
+use std::fs;
+
+pub struct Config {
+    pub query: String,
+    pub filename: String,
+    pub case_sensitive: bool,
+}
+
+impl Config {
+    pub fn new(args: &[String]) -> Result<Config, &str> {
+        if args.len() < 3 {
+            return Err("not enough arguments");
+        }
+
+        let query = args[1].clone();
+        let filename = args[2].clone();
+
+        Ok(Config { query, filename })
+    }
+}
+
+pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
+    let contents = fs::read_to_string(config.filename)?;
+
+    let results = if config.case_sensitive {
+        search(&config.query, &contents)
+    } else {
+        search_case_insensitive(&config.query, &contents)
+    };
+
+    for line in results {
+        println!("{}", line);
+    }
+
+    Ok(())
+}
+
+pub fn search<'a>(query: &str, contents: &'a str) -> Vec<&'a str> {
+    let mut results = Vec::new();
+
+    for line in contents.lines() {
+        if line.contains(query) {
+            results.push(line);
+        }
+    }
+
+    results
+}
+
+pub fn search_case_insensitive<'a>(
+    query: &str,
+    contents: &'a str,
+) -> Vec<&'a str> {
+    let query = query.to_lowercase();
+    let mut results = Vec::new();
+
+    for line in contents.lines() {
+        if line.to_lowercase().contains(&query) {
+            results.push(line);
+        }
+    }
+
+    results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn case_sensitive() {
+        let query = "duct";
+        let contents = "\
+Rust:
+safe, fast, productive.
+Pick three.
+Duct tape.";
+
+        assert_eq!(vec!["safe, fast, productive."], search(query, contents));
+    }
+
+    #[test]
+    fn case_insensitive() {
+        let query = "rUsT";
+        let contents = "\
+Rust:
+safe, fast, productive.
+Pick three.
+Trust me.";
+
+        assert_eq!(
+            vec!["Rust:", "Trust me."],
+            search_case_insensitive(query, contents)
+        );
+    }
+}
+#+end_src
+代码 12-22: 根据config.case_sensitive的值调用search或者 search_case_insensitive.
+
+最后, 我们需要检查环境变量的值. 和环境变量一起工作的函数在标准库的env模块里, 所以我们使用在src/lib.rs文件顶部一行的 use std::env引入那个模块到作用域. 当我们将使用来个env模块的var函数来检查一个叫CASE_INSENSITIVE的环境变量时, 如代码 12-23.
+
+文件名: src/lib.rs
+#+begin_src rust
+use std::env;
+// --snip--
+
+use std::error::Error;
+use std::fs;
+
+pub struct Config {
+    pub query: String,
+    pub filename: String,
+    pub case_sensitive: bool,
+}
+
+impl Config {
+    pub fn new(args: &[String]) -> Result<Config, &str> {
+        if args.len() < 3 {
+            return Err("not enough arguments");
+        }
+
+        let query = args[1].clone();
+        let filename = args[2].clone();
+
+        let case_sensitive = env::var("CASE_INSENSITIVE").is_err();
+
+        Ok(Config {
+            query,
+            filename,
+            case_sensitive,
+        })
+    }
+}
+
+pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
+    let contents = fs::read_to_string(config.filename)?;
+
+    let results = if config.case_sensitive {
+        search(&config.query, &contents)
+    } else {
+        search_case_insensitive(&config.query, &contents)
+    };
+
+    for line in results {
+        println!("{}", line);
+    }
+
+    Ok(())
+}
+
+pub fn search<'a>(query: &str, contents: &'a str) -> Vec<&'a str> {
+    let mut results = Vec::new();
+
+    for line in contents.lines() {
+        if line.contains(query) {
+            results.push(line);
+        }
+    }
+
+    results
+}
+
+pub fn search_case_insensitive<'a>(
+    query: &str,
+    contents: &'a str,
+) -> Vec<&'a str> {
+    let query = query.to_lowercase();
+    let mut results = Vec::new();
+
+    for line in contents.lines() {
+        if line.to_lowercase().contains(&query) {
+            results.push(line);
+        }
+    }
+
+    results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn case_sensitive() {
+        let query = "duct";
+        let contents = "\
+Rust:
+safe, fast, productive.
+Pick three.
+Duct tape.";
+
+        assert_eq!(vec!["safe, fast, productive."], search(query, contents));
+    }
+
+    #[test]
+    fn case_insensitive() {
+        let query = "rUsT";
+        let contents = "\
+Rust:
+safe, fast, productive.
+Pick three.
+Trust me.";
+
+        assert_eq!(
+            vec!["Rust:", "Trust me."],
+            search_case_insensitive(query, contents)
+        );
+    }
+}
+#+end_src
+代码 12-23: 查检一个叫 CASE_INSENSITIVE的环境变量
+
+至此, 我们创建了一个新的变量 case_sensitive, 为了设置它的值, 我们调用env::var函数然后传递名叫 CASE_INSENSITIVE的环境变量的名字. 如果环境变量有设置, env::var函数返回一个包含环境变量值的成功ok变体的Result. 如果环境变量没有设置它将返回Err变体.
+
+我们使用Result上的 is_err方法检查是否因为没有设置而导致的错误, 这意味着它应该做一次大小写敏感的搜索. 如果 CASE_SENSITIVE被设置成了任意的值, is_err将返回假然后程序将进行一次大小写不敏感的搜索. 我们不关心环境变量的值, 仅仅是它是否设置,所以我们使用 is_err而不是 unwrap,expect 或者我们见过的在Result上的任何其它方法.
+
+我们传递case_sensitive变量的值到Config实例, 所以run函数可以读到那个值然后决定调用 search还是 search_case_insensitive, 就像我们在代码12-22里实现的.
+
+让我们试一下! 首先,我们不设置环境变量运行我们的程序然后查询to, 这应该匹配所有包含全部小写单词"to"的任意行:
+#+begin_src shell
+$ cargo run to poem.txt
+   Compiling minigrep v0.1.0 (file:///projects/minigrep)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.0s
+     Running `target/debug/minigrep to poem.txt`
+Are you nobody, too?
+How dreary to be somebody!
+#+end_src
+
+目前看起来仍然运作!让我们把CASE_INSENSITIVE设置成1但是使用相同的查询"to"运行程序.
+
+如果我们使用 PowerShell, 你需要使用如下分开的命令设置环境变量和运行程序:
+#+begin_src shell
+PS> $Env:CASE_INSENSITIVE=1; cargo run to poem.txt
+#+end_src
+
+这将让CASE_INSENSITIVE一直保留在你的以后的会话里. 它可以使用 Remove-Item 命令工具重置:
+#+begin_src shell
+PS> Remove-Item Env:CASE_INSENSITIVE
+#+end_src
+我们将得到可能有大写字母的包含"to"的行;
+#+begin_src shell
+$ CASE_INSENSITIVE=1 cargo run to poem.txt
+    Finished dev [unoptimized + debuginfo] target(s) in 0.0s
+     Running `target/debug/minigrep to poem.txt`
+Are you nobody, too?
+How dreary to be somebody!
+To tell your name the livelong day
+To an admiring bog!
+#+end_src
+
+我们也得到了包含"To"的行!现在我们的minigrep程序可以做被环境变量挖掘的大小写不敏感搜索. 现在你知道了如何使用命令行参数或者环境变量管理选项设置.
+
+对于相同的配置一些程序允许接收参数和环境变量. 在这些情况下,程序决定一个或者其它的方式取得优先级. 作为你自己的另一个练习,尝试通过命令行参数和环境变量同时控制大小写. 如果程序运行时只有一个设置大小写敏感和设置大小写不敏感, 决定命令行参数还是环境变量取得优先级.
+
+处理环境变量时std::env 包含许多有很用的功能: 查看文档看一下有哪些变量.
+
+** 把错误消息写到标准错误输出, 而非标准输出
+当前, 我们使用println! 宏输出所有我们的输出到终端. 大多数的终端支持两种类型的输入: 标准输出(stdout)用于常规信息和标准错误输出(stderr)用于错误消息. 这种区分让用户去选择重定向程序的输入到一个文件但是仍然输入错误消息到屏幕.
+
+println! 宏只可以输出到标准输出,所以我们需要使用其它的打印到标准错误输出.
+
+*** 检查错误写到哪里
+首先, 让我们看一下当前minigrep输入的内容如何被写到标准输出, 包括任何我们想要写到标准错误输出的错误消息. 我们将故意产生一个错误时重定向标准输出流到一个文件. 我们不想重定向标准错误输出流, 所有任意的发送到标准错误输出的内容将继续显示在屏幕上.
+
+如何我们重定向标准输出到一个文件, 命令行程序期望发送错误消息到标准错误流所以我们仍然在屏幕上看到错误消息. 当前我们的程序表现不是很好: 我们将看到它保存错误消息到一个文件!
+
+这种行为表明的方式是运行程序 跟着 > 然后是文件名, output.txt, 我们想要重定向标准输出流程到的文件. 我们不传递任何参数, 这将导致一个错误:
+#+begin_src shell
+$ cargo run > output.txt
+#+end_src
+> 语法告诉shell写标准输出的内容到 output.txt 而不是屏幕. 我们没有看到我们希望输出到屏蔽的错误消息, 所以意味着它一定结束在文件里面了. 这是 output.txt包含的:
+#+begin_src text
+Problem parsing arguments: not enough arguments
+#+end_src
+
+我们的错误消息被输出到了标准输出. 对于向这里输出到标准错误输出的错误消息这很有用, 所以程序正确结束在文件里的数据. 我们将修改它.
+
+**** 输出错误到标准错误输出
+我们将使用代码 12-24里的代码来修改错误消息如何被输出. 因为在这一章里我们做的重构太早了, 输出错误消息的所有代码是在一个函数里, main.标准库提供 eprintln! 宏输出到标准错误流, 所以让我们修改两个我们调用println!的地方使用eprintln!宏输出错误消息.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::env;
+use std::process;
+
+use minigrep::Config;
+
+fn main() {
+    let args: Vec<String> = env::args().collect();
+
+    let config = Config::new(&args).unwrap_or_else(|err| {
+        eprintln!("Problem parsing arguments: {}", err);
+        process::exit(1);
+    });
+
+    if let Err(e) = minigrep::run(config) {
+        eprintln!("Application error: {}", e);
+
+        process::exit(1);
+    }
+}
+#+end_src
+代码 12-24: 使用 eprintln! 写错误消息到标准错误而不是标准输出
+
+在把 println! 改成 eprintln! 以后, 让我们用相同的方式重新运行程序, 没有任何参数使用> 重定向标准输出:
+#+begin_src shell
+$ cargo run > output.txt
+Problem parsing arguments: not enough arguments
+#+end_src
+
+现在我们在屏幕上看到了错误消息并且 output.txt里面没有东西, 这就是我们对命令行应用程序的期望表现.
+
+让我们带参数重新运行程序不要产生错误仍然重定向标准输出到一个文件, 就像:
+#+begin_src shell
+$ cargo run to poem.txt > output.txt
+#+end_src
+我们没有看到任何输出到了终端, 而且 output.txt也包含了我们的结果:
+
+文件名: output.txt
+#+begin_src text
+Are you nobody, too?
+How dreary to be somebody!
+#+end_src
+这显示了现在成功的输出我们使用标准输出然后错误输出使用标准错误输出和合适的方式.
+
+*** 总结
+这章复习了一些你目前为止已经学习过的主要的概念然后覆盖了在rust里如何表现通用的I/O操作. 通过使用命令行参数, 文件, 环境变量, 和eprintln!宏来输出错误消息,现在你已经准备好了写命令行应用程序.通过之前章节里使用的概念, 你的代码将有良好的组织,适合的数据结构的高效的数据存储, 漂亮的处理错误和很好的测试.
+
+下一步, 我们将探索一些rust的被函数式语言影响的功能: 必包和迭代器.
