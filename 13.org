@@ -1,0 +1,1680 @@
+* 函数式语言的功能: 迭代器和必包
+rust的设计灵感来自一些已经有的语言和技术, 和一个重要影响就是函数式语言. 函数式编程通常包括使用函数作为值传递它们, 从其它函数返回它们, 为了之后的运行把它们赋值给变量,等等.
+
+在这章,当作为函数式的时候, 我们不讨论什么是函数是编程的问题或者什么不是而仅仅讨论一些rust的和其它语言相信的功能.
+
+更具体的, 我们覆盖:
++ 必包, 你要以保存在一个变量里的像函数一样的结构
++ 迭代器, 处理一系列元素的一种方式
++ 使用这两个功能如何改进在12章里的I/O项目
++ 这两种功能的表现(它可能比你想像中的更快)
+
+  另一个rust的功能, 例如模式匹配和枚举 在其它章已经覆盖了,也被函数式影响着. 掌握必包和迭代器是编写更通用的, 更快的rust代码的重要部分, 所以我们将奉献这全部章节给他们.
+
+** 必包: 可以捕获他们环境的匿名函数
+rust的必包是你可以保存在一个变量或者作为参数传递给其它函数的匿名函数. 你可以在一个地方创建必包然后在另一个不同的上下文调用必包执行它. 不同于函数必包可以在他们定义的地方捕获来自作用域的值. 我们将展示这些必包如何允许代码重用和自定义的行为.
+
+*** 使用必包创建一个行为的抽象
+之后,让我们运行一个例子在什么情形下保存必包去执行有用.通过这种方式, 我们将讨论必包的语法, 类型接口, 和特征.
+
+考虑这种假想情形: 我们为制作一个程序在没有计划的情况下来产生客户运动的开始工作. 这种背景下使用rust编写, 而且没有计划的任务的生成算法考虑很多因素, 比如使用app的用户的年龄, 体重指数, 运动偏好,最近的锻炼,和他们指定的强度. 所使用的实际的算法在这个例子里不重要;重要的是这种情况需要几分钟. 我们可以称这种算法仅仅当我们需要或者调用一次所以我们不产生用户不必要的等待.
+
+我们用函数simulated_expensive_calculation 模拟调用这种假想的算法, 如代码13-1, 这将在两秒钟以后输出"calculating slowing..." 然后返回我们传进去的任意值.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::thread;
+use std::time::Duration;
+
+fn simulated_expensive_calculation(intensity: u32) -> u32 {
+    println!("calculating slowly...");
+    thread::sleep(Duration::from_secs(2));
+    intensity
+}
+
+fn main() {}
+#+end_src
+代码 13-1: 实现大约2秒钟以后运行的假想算法的函数
+
+下一步是main函数, 它包含了这个例子里锻炼的重要部分. 这个函数表现了当一个用户要求锻炼计算的时候应用将要调用的代码. 困为不相关的前端应用的相互关系和必包的使用没有关系, 我们硬编码值展示我们程序的输出然后输出它.
+
+需要的输入是这些:
++ 来自用户的一个强度数值,当他们要求一次锻炼以评估是否他们想要一个低强度的锻炼或者一个更高强度的锻炼时指出的
++ 一个随机数, 将在他们的锻炼计划里产生一些变化
+
+输出将会是推荐的锻炼计划. 代码13-2展示了我们将要使用的main函数.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::thread;
+use std::time::Duration;
+
+fn simulated_expensive_calculation(intensity: u32) -> u32 {
+    println!("calculating slowly...");
+    thread::sleep(Duration::from_secs(2));
+    intensity
+}
+
+fn generate_workout(intensity: u32, random_number: u32) {}
+
+fn main() {
+    let simulated_user_specified_value = 10;
+    let simulated_random_number = 7;
+
+    generate_workout(simulated_user_specified_value, simulated_random_number);
+}
+#+end_src
+代码 13-2: 一个硬编码模拟用户输入的值和产生随机数字的main函数
+
+我们为了简单起见硬编码了变量 simulated_user_specified_value为10然后变量 simluated_random_number为7; 在一个实际的程序里, 我们从前端应用程序里获取锻炼强度数值,然后使用rand库产生随机数字,就像我们在第2章的猜数字游戏里做的一样. main函数使用模拟的输入值调用 generate_workout函数.
+
+现在我们有了上下文, 让我们进入算法. 函数 generate_workout 在代码 13-3里包含了在这个例子里我们最担心的应用的商业逻辑, 修改这个例子里剩下的代码将完成这个函数.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::thread;
+use std::time::Duration;
+
+fn simulated_expensive_calculation(intensity: u32) -> u32 {
+    println!("calculating slowly...");
+    thread::sleep(Duration::from_secs(2));
+    intensity
+}
+
+fn generate_workout(intensity: u32, random_number: u32) {
+    if intensity < 25 {
+        println!(
+            "Today, do {} pushups!",
+            simulated_expensive_calculation(intensity)
+        );
+        println!(
+            "Next, do {} situps!",
+            simulated_expensive_calculation(intensity)
+        );
+    } else {
+        if random_number == 3 {
+            println!("Take a break today! Remember to stay hydrated!");
+        } else {
+            println!(
+                "Today, run for {} minutes!",
+                simulated_expensive_calculation(intensity)
+            );
+        }
+    }
+}
+
+fn main() {
+    let simulated_user_specified_value = 10;
+    let simulated_random_number = 7;
+
+    generate_workout(simulated_user_specified_value, simulated_random_number);
+}
+#+end_src
+代码 13-3: 根据输入输出工作计划的商业逻辑和对 simulated_expensive_calculation函数的调用
+
+在 13-3 里的函数有多个调用来让函数计算变慢. 开始的if块调用 simluted_expensive_calculation 两次, 里面的if和外面的else也不调用,然后第二个else里的代码调用一次.
+
+generate_workout函数想要的表现是首先检查用户想要一个更低的锻炼强度(一个小于25的值)或者一个更高的锻炼强度(25更或者更高的数字).
+
+根据假想出来的复制算法, 低强度锻炼计划将推荐一个我们俯卧撑和仰卧起坐的数值.
+
+如果用户想要一个高强度的锻炼, 这里有一些附加的逻辑: 如果由应用产生的随机数值的值恰好是3, 应用将推荐休息和补水. 如果不是, 用户将根据复杂算法得到一个跑步分钟的数值.
+
+现在代码按照商业想要的方式运作, 而不是在将来数据科学团队决定我们需要修改调用 simluated_expensive_calcution函数的方式. 当这些改变发生的时候为了简化修改, 我们想要重构这段代码,所以 它仅仅一次叫作 simluted_expensive_calculation 函数. 我们也想要切断当前不必要没有添加其它调用的的两次进程中的那个函数调用. 就是,如果结果我们不需要, 我们不想调用它,然后我也仍然想要调用仅仅一次.
+
+*** 使用函数重构
+我们可以用多种方式重构锻炼程序. 首先, 我们尝试抽出重复的simulated_expensive_calculation 方法调用到一个变量里,如代码 13-4.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::thread;
+use std::time::Duration;
+
+fn simulated_expensive_calculation(intensity: u32) -> u32 {
+    println!("calculating slowly...");
+    thread::sleep(Duration::from_secs(2));
+    intensity
+}
+
+fn generate_workout(intensity: u32, random_number: u32) {
+    let expensive_result = simulated_expensive_calculation(intensity);
+
+    if intensity < 25 {
+        println!("Today, do {} pushups!", expensive_result);
+        println!("Next, do {} situps!", expensive_result);
+    } else {
+        if random_number == 3 {
+            println!("Take a break today! Remember to stay hydrated!");
+        } else {
+            println!("Today, run for {} minutes!", expensive_result);
+        }
+    }
+}
+
+fn main() {
+    let simulated_user_specified_value = 10;
+    let simulated_random_number = 7;
+
+    generate_workout(simulated_user_specified_value, simulated_random_number);
+}
+#+end_src
+代码 13-4: 抽出调用 sumulated_expensive_calculation 到一个地方然后使用expensive_result变量保存结果
+
+这种修改统一了对simulated_expensive_calculation 的调用而且解决了非必要的第一个if调用两次方法的问题. 不幸的是, 现在我们所有情况调用这个方法然后等待结果,这包括内部的if块也没有使用到结果的值.
+
+我们想要在generate_workout里仅仅引用一次 simlulated_expensive_calculation, 而延迟昂贵的计算至到我们想要需要结果的地方. 这就是一个使用必包的情况!
+
+*** 使用必包重构以保存代码
+在if块之前相对于调用 simulated_expensive_calculation函数的方式, 我们可以定义一个必包然后在一个变量里保存必包而非保存函数调用的结果, 如代码 13-5. 我们可以确实地移动整个simulated_expensive_calculation的函数体到我们这里介绍的必包里面.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::thread;
+use std::time::Duration;
+
+fn generate_workout(intensity: u32, random_number: u32) {
+    let expensive_closure = |num| {
+        println!("calculating slowly...");
+        thread::sleep(Duration::from_secs(2));
+        num
+    };
+
+    if intensity < 25 {
+        println!("Today, do {} pushups!", expensive_closure(intensity));
+        println!("Next, do {} situps!", expensive_closure(intensity));
+    } else {
+        if random_number == 3 {
+            println!("Take a break today! Remember to stay hydrated!");
+        } else {
+            println!(
+                "Today, run for {} minutes!",
+                expensive_closure(intensity)
+            );
+        }
+    }
+}
+
+fn main() {
+    let simulated_user_specified_value = 10;
+    let simulated_random_number = 7;
+
+    generate_workout(simulated_user_specified_value, simulated_random_number);
+}
+#+end_src
+代码 13-5: 定义一个必包保存在变量expensive_closure里
+
+必包定义在赋值给它的变量 expensive_closure的等号后面. 定义一个必包, 我们用一对的竖线开始, 在我们给必包指定的参数里; 选择这种语法是因为它的定义和我们在Smalltask和ruby里指定参数的形式的相似. 这里的必包有一个叫 num的参数: 如果我们有不只一个参数, 我们可以使用逗号分开它们, 比如 |param1, param2|.
+
+参数之后, 我们放一个大括号保存整个必包的执行体--如果必包的执行体是一个简单表达式这些是可选的. 必包的结尾, 大括号之后,需要一个分号结束let语句. 在必包里的最后一行返回的值将会是它被调用的时候必包的返回值, 因为那一行不必使用分号结束;和函数体里的一样.
+
+注意这里的let语句意味着 expensive_closure 包含了匿名函数的定义, 而不是调用匿名函数的结果值. 回顾我们使用的必包因为我们想要在一个地方定义调用的代码, 保存那段代码, 然后在后面的某个点调用它; 我们想要调用的代码现在被保存在 expensive_closure里.
+
+必包定义以后, 我们可以修改在if块里的代码调用必包执行代码然后得到结果值. 我们调用一个必包和调用一个函数一样: 我们指定保存必包定义的变量名字然后是我们想要使用的包含参数值的小括号, 如代码 13-6.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::thread;
+use std::time::Duration;
+
+fn generate_workout(intensity: u32, random_number: u32) {
+    let expensive_closure = |num| {
+        println!("calculating slowly...");
+        thread::sleep(Duration::from_secs(2));
+        num
+    };
+
+    if intensity < 25 {
+        println!("Today, do {} pushups!", expensive_closure(intensity));
+        println!("Next, do {} situps!", expensive_closure(intensity));
+    } else {
+        if random_number == 3 {
+            println!("Take a break today! Remember to stay hydrated!");
+        } else {
+            println!(
+                "Today, run for {} minutes!",
+                expensive_closure(intensity)
+            );
+        }
+    }
+}
+
+fn main() {
+    let simulated_user_specified_value = 10;
+    let simulated_random_number = 7;
+
+    generate_workout(simulated_user_specified_value, simulated_random_number);
+}
+#+end_src
+代码 13-6: 调用我们定义的expensive_closure
+
+现在如何表现昂贵的计算仅仅被定义在了一个地方, 我们仅仅需要在我们需要结果的地方执行那段代码.
+
+然而, 我们重新来自代码13-3的问题的一个: 在开始的if块我们仍然调用必包两次, 调用了昂贵计算代码两次而且让用户等待尽可能久两次. 我们将创建一个本地变量if块保存必包调用的结果来解决这个问题, 但是必包给我们提供了另一种解决方案. 我们将讨论一点点这种解决方案. 但是首先让我们讨论在必包定义和必包涉及的特征这里为什么没有类型申明.
+
+*** 必包类型推断和申明
+必包不需要你向fn函数一样申明参数或者返回值的类型. 函数里的类型申明是必需的因为对于你的用户它们是明确的接口暴露的一分部. 死板的定义这种接口对于确保每个人同意函数使用和返回的值的类型很重要. 但是必包不是像这样的一个暴露出来的接口: 它们被保存于变量没有名字的去使用它们暴露它们给我们库的用户.
+
+必包通常很短而且只有很少的上下文而不是在任意的情况下. 在这些有限的上下文里, 编译器可以推断出参数和返回值的类型, 类似于如何推断出大多数变量的类型.
+
+在这些小的,匿名函数里让程序申明类型对于编译器已经有的变量的信息将会烦人且多余.
+
+有了变量, 如果我们想要比严格的必需增加更多的细节增加明确性和清楚性, 我们可以添加类型申明. 给我们定义在代码 13-5里的必包增加类型申明将会像展示在代码13-7里的定义一样.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::thread;
+use std::time::Duration;
+
+fn generate_workout(intensity: u32, random_number: u32) {
+    let expensive_closure = |num: u32| -> u32 {
+        println!("calculating slowly...");
+        thread::sleep(Duration::from_secs(2));
+        num
+    };
+
+    if intensity < 25 {
+        println!("Today, do {} pushups!", expensive_closure(intensity));
+        println!("Next, do {} situps!", expensive_closure(intensity));
+    } else {
+        if random_number == 3 {
+            println!("Take a break today! Remember to stay hydrated!");
+        } else {
+            println!(
+                "Today, run for {} minutes!",
+                expensive_closure(intensity)
+            );
+        }
+    }
+}
+
+fn main() {
+    let simulated_user_specified_value = 10;
+    let simulated_random_number = 7;
+
+    generate_workout(simulated_user_specified_value, simulated_random_number);
+}
+#+end_src
+代码 13-7: 在必包里增加可选的参数和返回值的类型申明
+
+增加了类型申明, 必包的语法为函数的语法更相似了. 下面是给它的参数加1的函数和定义语法和相同行为的必包的一个竖直比较. 我们在相关部分的行里平加了空格. 这里说明了除了使用竖线和大量可选的语法必包语法和函数语法如果的相似:
+
+#+begin_src rust
+fn  add_one_v1   (x: u32) -> u32 { x + 1 }
+let add_one_v2 = |x: u32| -> u32 { x + 1 };
+let add_one_v3 = |x|             { x + 1 };
+let add_one_v4 = |x|               x + 1  ;
+#+end_src
+
+第一行展示了一个函数定义, 然后第二行展示了一个完整申明的必包定义. 第三行从必包定义里移除了类型申明, 第四行移除了可选的大括号, 因为必包体只有一个表达式. 这些当它们被调用时我们产生相同行为的定义全部有效. 调用必包需要 add_one_v4和add_one_v4可以被编译因为类型将从它们的使用里去推断.
+
+必包定义对于每个它们自己的参数和它们的返回值将有一个具体的类型推断. 比如, 代码 13-8 展示了仅仅返回它作为参数接收的值的短必包的定义. 除了在这个例子里这个必包不是很有用. 注意我们为了给定义添加任何的类型申明; 如果我们调用必包两次, 第一次使用字符串作为参数然后第二次使用u32, 我们将得到一个错误.
+
+文件名: src/main.rs
+#+begin_src rust
+fn main() {
+    let example_closure = |x| x;
+
+    let s = example_closure(String::from("hello"));
+    let n = example_closure(5);
+}
+#+end_src
+代码 13-8: 调试调用一个它们的类型被推断成两种类型的必包
+
+编译器将给我们这样的错误:
+#+begin_src shell
+$ cargo run
+   Compiling closure-example v0.1.0 (file:///projects/closure-example)
+error[E0308]: mismatched types
+ --> src/main.rs:5:29
+  |
+5 |     let n = example_closure(5);
+  |                             ^
+  |                             |
+  |                             expected struct `String`, found integer
+  |                             help: try using a conversion method: `5.to_string()`
+
+For more information about this error, try `rustc --explain E0308`.
+error: could not compile `closure-example` due to previous error
+#+end_src
+
+第一次我们使用String值调用 example_closure, 编译器推断x的类型和必包的返回类型为String. 在 example_closure里这些类型被固定进必包里, 如果我们在一个相同的必包里尝试使用不同的类型我们会得到一个类型错误.
+
+*** 使用泛型参数保存必包与Fn特征
+让我们回我们锻炼生成的应用里. 在代码13-6里, 我们的代码仍然调用比它实际需要的更多次数昂贵计算必包. 一个可选的修正这个问题的方式为了重用在一个变量里保存昂贵计算必包的结果然后在每个我们需要结果的地方使用这个变量, 而不是再次调用必包. 然而, 这个方法调用导致了很多重复的代码.
+
+有幸的, 我们有另一个可行的方案. 我们可以创建一个保存必包和调用必包返回值的结构体. 只有我们需要结果值的时候结构体将执行必包, 然后它将缓存结果所以我们后面的代码没有保存和重用结果的职责. 你可能知道这种模式 记忆化 或者叫 懒执行.
+
+为了创建保存必包的结构体, 我们需要指定必包的类型, 因为一个结构体定义需要知道每个它的字段的类型. 每个必包实例有自己唯一的匿名类型: 如此, 即使两个必包有相同的签名, 它们的类型都被认为是不同的. 定义一个结构体, 枚举,或者使用必包的函数参数, 我们使用泛型和特征边界, 就像我们在第10章里讨论的.
+
+标准库提供了Fn特征. 所有的必包实现至少这些特征中的一个: Fn, FnMut,或者 FnOnce. 我们将在"使用必包捕获环境"里讨论这些特征的区别; 这个例子里, 我们可以使用Fn特征.
+
+我们给Fn特征边界增加类型来表现参数的类型和返回值, 必包必须匹配这个特征边界. 这种情况下,我们的必包有一个u32类型和参数和u32类型的返回, 所以特征边界我们指定为 Fn(u32) -> u32.
+
+代码13-9 展示了保存一个必包和一个可选结果值的结构体Cacher的定义.
+
+文件名: src/main.rs
+#+begin_src rust
+struct Cacher<T>
+where
+    T: Fn(u32) -> u32,
+{
+    calculation: T,
+    value: Option<u32>,
+}
+
+fn main() {}
+#+end_src
+代码 13-9: 定义在calculation保存一个必包和在value里保存一个可选结果的结构体 Cacher
+
+Cacher结构体有一个泛型类型T的字段calculation. T上的特征边界指出它是一个使用Fn特征的必包. 任何我们想在calculation里保存的字段必须有一个u23的参数(Fn后面的小括号里指定)然后必须返回一个u32(在->后面指定).
+
+#+begin_example
+注意: 函数也可以实现Fn特征的所有三个. 如果我们想要去做的不需要捕获一个来自环境的值, 我们可以在我们需要实现一个Fn特征的一些事情的地方使用函数而不是必包
+#+end_example
+value字段的类型是Option<u32>. 在我们执行必包之前,value将是None. 当代码使用了一个询问必包结果的Cacher, Cacher会在那个时候执行必包然后保存结果在value字段的Some变体里. 然后如果代码再次需要必包的结果, 不需要再次执行代码,Cacher将会返回在Some变体里的结果.
+
+我们围绕着已经描述的value字段的逻辑被定义在代码 13-10.
+
+文件名: src/main.rs
+#+begin_src rust
+struct Cacher<T>
+where
+    T: Fn(u32) -> u32,
+{
+    calculation: T,
+    value: Option<u32>,
+}
+
+impl<T> Cacher<T>
+where
+    T: Fn(u32) -> u32,
+{
+    fn new(calculation: T) -> Cacher<T> {
+        Cacher {
+            calculation,
+            value: None,
+        }
+    }
+
+    fn value(&mut self, arg: u32) -> u32 {
+        match self.value {
+            Some(v) => v,
+            None => {
+                let v = (self.calculation)(arg);
+                self.value = Some(v);
+                v
+            }
+        }
+    }
+}
+
+fn main() {}
+#+end_src
+代码 13-10: Cacher的缓存逻辑
+
+我们想要Cacher 管理结构体字段值而非直接的让潜在的调用代改变在这些字段里的值, 所以这些字段是仅有的.
+
+Cacher::new 函数获取一个泛型参数T, 我们已经定义作为一些特征边界的Cacher结构体. 然后 Cacher::new 返回一个保存在被calculation字段指定的必包和一个在value字段的None值的Cacher实例, 因为我们还没的执行必包.
+
+当我们调用代码需要必包执行的结果时, 我们不直接调用必包, 而是调用value方法. 这个方法检查我们是否已经有一个在一个Some里self.value里的结果值; 如果我们有, 它返回有Some的值,而不需要再次执行必包.
+
+如果 self.value是None, 代码调用保存在self.calculation里的必包, 为以后的使用保存结果在self.value里, 然后也返回值.
+
+代码 13-11 展示了来个代码13-6我们在函数 generate_workout里怎样使用Cacher结构体.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::thread;
+use std::time::Duration;
+
+struct Cacher<T>
+where
+    T: Fn(u32) -> u32,
+{
+    calculation: T,
+    value: Option<u32>,
+}
+
+impl<T> Cacher<T>
+where
+    T: Fn(u32) -> u32,
+{
+    fn new(calculation: T) -> Cacher<T> {
+        Cacher {
+            calculation,
+            value: None,
+        }
+    }
+
+    fn value(&mut self, arg: u32) -> u32 {
+        match self.value {
+            Some(v) => v,
+            None => {
+                let v = (self.calculation)(arg);
+                self.value = Some(v);
+                v
+            }
+        }
+    }
+}
+
+fn generate_workout(intensity: u32, random_number: u32) {
+    let mut expensive_result = Cacher::new(|num| {
+        println!("calculating slowly...");
+        thread::sleep(Duration::from_secs(2));
+        num
+    });
+
+    if intensity < 25 {
+        println!("Today, do {} pushups!", expensive_result.value(intensity));
+        println!("Next, do {} situps!", expensive_result.value(intensity));
+    } else {
+        if random_number == 3 {
+            println!("Take a break today! Remember to stay hydrated!");
+        } else {
+            println!(
+                "Today, run for {} minutes!",
+                expensive_result.value(intensity)
+            );
+        }
+    }
+}
+
+fn main() {
+    let simulated_user_specified_value = 10;
+    let simulated_random_number = 7;
+
+    generate_workout(simulated_user_specified_value, simulated_random_number);
+}
+#+end_src
+代码 13-11: 为缓存逻辑抽象的方法在generate_workout里使用Cacher
+
+不直接的保存必包到一个变量, 我们保存了一个保存必包的新的Cacher的实例. 然后, 在我们想要结果的每个地方, 我们在Cacher实例上调用value方法. 我们可以任我们想要的次数调用value方法, 或者根本不调用, 然后昂贵的计算将被最多运行一次.
+
+尝试从代码13-2在main函数里运行这个程序. 改变在simlulated_user_specified_value和simulated_random_number变量的值来验证在if或者else块的变量所有情况下, calculating slowly... 只出现一次而且只有当需要的时候出现. Cacher小心的处理逻辑以保证我们不会调用昂贵的计算超过我们的需要所以generate_workout可以关注于业务逻辑.
+
+*** Cacher实现的限制
+使用不同的必包在我们代码的其它部分缓存值通常表现得很有用. 然而,这里有两个当前Cacher实现的问题这将在不同的上下文重用必包变得因难.
+
+第一个问题是一个Cacher实例假设它将一直得到value方法的参数arg的相同值. 就这样, Cacher的这个测试将会失败:
+#+begin_src rust
+struct Cacher<T>
+where
+    T: Fn(u32) -> u32,
+{
+    calculation: T,
+    value: Option<u32>,
+}
+
+impl<T> Cacher<T>
+where
+    T: Fn(u32) -> u32,
+{
+    fn new(calculation: T) -> Cacher<T> {
+        Cacher {
+            calculation,
+            value: None,
+        }
+    }
+
+    fn value(&mut self, arg: u32) -> u32 {
+        match self.value {
+            Some(v) => v,
+            None => {
+                let v = (self.calculation)(arg);
+                self.value = Some(v);
+                v
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn call_with_different_values() {
+        let mut c = Cacher::new(|a| a);
+
+        let v1 = c.value(1);
+        let v2 = c.value(2);
+
+        assert_eq!(v2, 2);
+    }
+}
+#+end_src
+这个测试创建了一个新的带有返回传递给它的值的必包的Cacher实例. 我们使用一个arg值1在这个Cacher实例上调用value方法然后是arg的值2, 然后我们期望使用arg值2调用的value方法返回2.
+
+使用在代码13-9和代码13-10里的Cacher的实现运行测试, 然后测试将在assert_eq!上失败,消息如下:
+#+begin_src shell
+$ cargo test
+   Compiling cacher v0.1.0 (file:///projects/cacher)
+    Finished test [unoptimized + debuginfo] target(s) in 0.72s
+     Running unittests (target/debug/deps/cacher-074d7c200c000afa)
+
+running 1 test
+test tests::call_with_different_values ... FAILED
+
+failures:
+
+---- tests::call_with_different_values stdout ----
+thread 'main' panicked at 'assertion failed: `(left == right)`
+  left: `1`,
+ right: `2`', src/lib.rs:43:9
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::call_with_different_values
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass '--lib'
+#+end_src
+
+问题是第一次我们使用1调用c.value方法, Cacher实例在self.value保存Some(1). 此后不管我们传递什么值给value方法, 它总是返回1.
+
+尝试修改Cacher来保存一个哈希字典而不是一个简单值. 哈希的键是传进去的args的值, 然后哈希的值将是在那个键里调用必包的结果. 而不是直接查找self.value有一个Some或者None值, value函数将在哈希里查找args, 如果有,返回值. 如果没有 Cacher将调用必包然后在哈希里和arg的值关联的部分保存值.
+
+现在Cacher实现的第二个问题是它仅仅接收带有一个u32类型的参数和u32返回的必包. 我们或许想要缓存接收一个字符串切片和返回usize值的必包的结果, 对于这个例子. 修正这个问题, 尝试引入更多的泛型参数来增加Cacher功能的可扩展性.
+
+*** 使用必包捕获环境
+在锻炼的生成器例子里, 我们仅仅把必包作为行内匿名函数使用. 然而, 必包有一个附加的函数没有的能力: 它们可以捕猎它们的环境然后访问在他们定义的时候来自算作域的变量.
+
+代码 13-12 展示了一个使用保存在变量equal_to_x里来自必包上下文环境的变量x的必包的例子.
+
+文件名: src/main.rs
+#+begin_src rust
+fn main() {
+    let x = 4;
+
+    let equal_to_x = |z| z == x;
+
+    let y = 4;
+
+    assert!(equal_to_x(y));
+}
+#+end_src
+代码 13-12: 在封闭作用或引用一个变量的必包的例子
+
+这里, 虽然x不是 equal_to_x的一个参数, equal_to_x 允许使用定义在相同定义equal_to_x定义的地方的作用域下的x变量.
+
+用函数我们不能做相同的事情; 如果我们尝试以下例子, 我们的代码将编不过:
+
+文件名: src/main.rs
+#+begin_src rust
+fn main() {
+    let x = 4;
+
+    fn equal_to_x(z: i32) -> bool {
+        z == x
+    }
+
+    let y = 4;
+
+    assert!(equal_to_x(y));
+}
+#+end_src
+
+我们得到一个错误
+#+begin_src shell
+$ cargo run
+   Compiling equal-to-x v0.1.0 (file:///projects/equal-to-x)
+error[E0434]: can't capture dynamic environment in a fn item
+ --> src/main.rs:5:14
+  |
+5 |         z == x
+  |              ^
+  |
+  = help: use the `|| { ... }` closure form instead
+
+For more information about this error, try `rustc --explain E0434`.
+error: could not compile `equal-to-x` due to previous error
+#+end_src
+
+编译器甚至提醒我们这里只可以使用必包!
+
+当一个必包从它的环境里捕获一个值, 它将使用内存来保存在必包体里使用的值. 这将会使用更多的在通常环境下我们不想支付的内存, 在我们想要执行不捕获环境变量的代码的地方. 因为函数从来不允许捕获它们的环境, 定义和使用函数从来不会产生这种负重.
+
+必包可以使用三种方式捕获来自它们环境的值, 直接映射到三种方式一个函数可以获取一个参数: 获取所有权, 可写的借用, 和不可写的借用. 这些被包含在了如下的三个Fn特征里:
++ FnOnce 消费变量捕获来自封闭的作用域, 也叫必包环境. 消费捕获到的变量, 必包必须获取这些变量的所有权然后当它们被定义的时候把移动它们到必包里来. 名字的Once部分说明了事实必包不超过一次的获取一些变量的所有权, 所以它只可以被调用一 次.
++ FnMut 可以修改环境因为它可读的借用值
++ Fn只读地借用来自环境的值
+
+  当你创建一个必包, rust根据必包从环境怎样使用值推测哪个特征将被使用. 所有必包实现FnOnce 因为它们可以被至少一次地调用. 不移动捕获变量的必包也实现了FnMut, 不需要修改访问捕获到的变量的必包也实现了Fn. 在代码13-12里, equal_to_x 必包可修改地借用x(所以 equal_to_x实现了Fn特征)因为必包的执行体只需要读在x里面的值.
+
+如果你想要必包强制的获取在环境里它使用的值的所的权, 你可以在参数列表前使用move关键字. 当传递一个必包到一个新的线程移动数据所以它被新线程所有的时候这个技术大多数时候很有用.
+
+#+begin_example
+注意: move必包可能也实现了Fn或者FnMut, 虽然它们使用move捕获变量. 这是因为必包类型特征的实现被必包使用捕获的值做什么来决定, 而不是如何捕获它们. move关键字只指定了后者.
+#+end_example
+
+当我们讨论并发的时候在16章我们将有更多的move必包的例子. 于现在而言, 来自代码13-12有着move关键字的这些代码添加到必包的定义上面然后使用向量代替数字, 因为数字可以被复制而不是移动; 注意这里的代码还不能被编译.
+
+文件名: src/main.rs
+#+begin_src rust
+fn main() {
+    let x = vec![1, 2, 3];
+
+    let equal_to_x = move |z| z == x;
+
+    println!("can't use x here: {:?}", x);
+
+    let y = vec![1, 2, 3];
+
+    assert!(equal_to_x(y));
+}
+#+end_src
+
+我们收到如下错误:
+#+begin_src shell
+$ cargo run
+   Compiling equal-to-x v0.1.0 (file:///projects/equal-to-x)
+error[E0382]: borrow of moved value: `x`
+ --> src/main.rs:6:40
+  |
+2 |     let x = vec![1, 2, 3];
+  |         - move occurs because `x` has type `Vec<i32>`, which does not implement the `Copy` trait
+3 | 
+4 |     let equal_to_x = move |z| z == x;
+  |                      --------      - variable moved due to use in closure
+  |                      |
+  |                      value moved into closure here
+5 | 
+6 |     println!("can't use x here: {:?}", x);
+  |                                        ^ value borrowed here after move
+
+For more information about this error, try `rustc --explain E0382`.
+error: could not compile `equal-to-x` due to previous error
+#+end_src
+
+因为我们添加了move关键字, 当必包定义的时候x值被移动到必包里. 然后必包拥有了x的所有权, 然后在println!语句里main再也不允许使用x. 去掉 println! 将修正这个例子.
+
+当指定一个Fn特征边界的多数时间, 你可以由Fn开始然后编译器根据在必包执行体里发生了什么会告诉你是否你需要FnMut或者FnOnce.
+
+想象必包可以捕获它们环境的的地方和函数参数一样有用, 让我们继续下一个话题: 迭代器.
+
+** 使用迭代器处理一系列元素
+迭代器模式允许你在一个循环里展示一些在一个序列上的任务. 一个迭代子为一次迭代每个元素和决定何时序列结束的逻辑负责. 当你使用迭代子, 你不用自己重新实现那个逻辑.
+
+在rust里, 迭代子是懒的, 意味着至到你调用消费迭代子使用的方法前它们不生效. 比如, 在代码13-13里, 通过调用定义在Vec<T>上的iter方法在向量v1的每个元素上创建一个迭代子. 这段代码本身不做任何有用的事情.
+#+begin_src rust
+fn main() {
+    let v1 = vec![1, 2, 3];
+
+    let v1_iter = v1.iter();
+}
+#+end_src
+代码 13-13: 创建一个迭代子
+一旦我们创建了一个迭代子, 我们可以用多种方式使用它. 在第3章的代码3-5里, 我们通过for循环在每个元素执行一些代码使用迭代子, 虽然至到现在我们掩盖了我们在哪里调用了iter.
+
+在代码13-14的例子从在for循环里使用迭代子分开了迭代子的创建. 迭代子被保存在了v1_iter变量, 然后在那时没有迭代产生. 当for循环使用v1_iter里的迭代子被调用, 在迭代器里的每个元素在for循环的迭代里被使用, 它输出了每个值.
+
+#+begin_src rust
+fn main() {
+    let v1 = vec![1, 2, 3];
+
+    let v1_iter = v1.iter();
+
+    for val in v1_iter {
+        println!("Got: {}", val);
+    }
+}
+#+end_src
+代码 13-14: 在for循环里使用迭代器
+
+在它们的标准库没有提供迭代器的语言里, 你很可能通过开始一个索引为0的变量编写这些功能, 使用那些在向量里的索引的那些变量来获取一个值, 然后在一个循环里增加变量的值至到它到达了在向量里的元素的总数.
+
+迭代器为你处理了那些所有逻辑, 减少了你可能潜在混淆的重复代码. 迭代器给你更多的使用不同类型的序列的相似逻辑的扩展性, 不只是你可以索引的数据结构, 像向量. 让我们看看迭代器怎样做那些.
+
+** Iterator特征和next方法
+所有迭代器实现一个叫Iterator的定义在标准库的特征. 特征的定义像这样:
+#+begin_src rust
+
+#![allow(unused)]
+fn main() {
+pub trait Iterator {
+    type Item;
+
+    fn next(&mut self) -> Option<Self::Item>;
+
+    // methods with default implementations elided
+}
+}
+#+end_src
+注意这些定义使用一些新的语法: type Item和 self::Item, 这使用这个特征定义一个关联的类型. 我们将在第19章深入讨论关于关联类型. 现在, 所有你需要知道的是这段代码表明实现迭代器特征需要你也定义一个Item类型, 然后这个Item类型被使用在next方法的返回类型. 换言之, Item类型将是从迭代器返回的类型.
+
+Iterator特征只需要定义一个方法的实现, 这在一次时间内返回一个迭代器的元素在Some里, 当迭代器结束的时候返回None.
+
+我们可以在迭代器上直接调用next方法; 代码13-15显示了从向里创建的迭代器重复的调用返回的是什么值.
+
+文件名: src/lib.rs
+#+begin_src rust
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn iterator_demonstration() {
+        let v1 = vec![1, 2, 3];
+
+        let mut v1_iter = v1.iter();
+
+        assert_eq!(v1_iter.next(), Some(&1));
+        assert_eq!(v1_iter.next(), Some(&2));
+        assert_eq!(v1_iter.next(), Some(&3));
+        assert_eq!(v1_iter.next(), None);
+    }
+}
+#+end_src
+代码 13-15: 在一个迭代器上调用next方法
+
+注意我们需要让v1_iter可写: 在一个迭代器上调用next方法改变迭代器使用的跟踪它在序列的哪里的内部状态. 换言之, 这段代码消耗或者用完迭代器. 每次调用next吃完一个来自迭代器的元素. 当我们使用一个for循环时我们不需要让v1_iter可写因为循环获取v1_iter的所有权然后在后面让它可写.
+
+也需要注意我们从next方法调用得到的值是不可写的向量里值的引用. iter方法产生一个在不可写的引用上的迭代子. 如果我们想创建一个获取v1所有权的迭代子然后返回拥有的值, 我们可以调用 into_iter 代替iter. 类似地, 如果我们想要基于可写引用的迭代器, 我们可以调用iter_mut代码iter.
+
+** 消耗迭代器的方法
+和标准库提供的不同的实现一起, Iterator特征有一堆的不同的方法; 你可以找到Iterator特征的在标准库API文档里的这些方法. 这些方法的一些在它们的定义里调用next方法, 这就是为什么当实现Iterator特征时你需要实现next方法.
+
+调用next的方法被叫作消耗适配器, 因为调用它们使用了迭代器. 一个例子是sum方法, 它通过重复的调用next获取迭代器的所有权, 这样消耗了迭代器. 当它迭代通过时, 它增加每个元素来运行总和然后当迭代完成返回总和. 代码13-16有一个说明sum方法的使用的测试:
+
+文件名: src/lib.rs
+#+begin_src rust
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn iterator_sum() {
+        let v1 = vec![1, 2, 3];
+
+        let v1_iter = v1.iter();
+
+        let total: i32 = v1_iter.sum();
+
+        assert_eq!(total, 6);
+    }
+}
+#+end_src
+代码 13-16: 在迭代器上调用sum方法获取所有元素的总和
+
+在调用sum之后我们不可以使用v1_iter因为sum获取了我们想要调用的迭代器的所有权.
+
+** 产生其它迭代器的方法
+其它的方法定义在Iterator特征里, 被叫作迭代适配器, 允许你修改迭代到为迭代器的不同种类. 你可以在迭代适配器上链式的多次调用迭代器来以一种可读的方式展示复杂的行为. 但是因为所有迭代器都是懒加载, 你需要调用消耗适配方法的一个来从迭代适配器里获取结果.
+
+代码 13-17展示了一个调用迭代适配器map方法的例子, 它接收一个必包在每个元素上面调用来产生一个新的迭代器. 这里必包在来自于向量的每个被加1的元素上创建了一个新的迭代器. 然而, 这段代码产生一个警告:
+
+文件名: src/main.rs
+#+begin_src rust
+fn main() {
+    let v1: Vec<i32> = vec![1, 2, 3];
+
+    v1.iter().map(|x| x + 1);
+}
+#+end_src
+代码 13-17: 调用迭代适配map方法生成一个新的迭代器
+
+我们得到的警告是这样的:
+#+begin_src shell
+$ cargo run
+   Compiling iterators v0.1.0 (file:///projects/iterators)
+warning: unused `Map` that must be used
+ --> src/main.rs:4:5
+  |
+4 |     v1.iter().map(|x| x + 1);
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_must_use)]` on by default
+  = note: iterators are lazy and do nothing unless consumed
+
+warning: `iterators` (bin "iterators") generated 1 warning
+    Finished dev [unoptimized + debuginfo] target(s) in 0.47s
+     Running `target/debug/iterators`
+#+end_src
+
+在代码 13-17里的代码不做任何事情; 我们指定的必包永远不会被调用. 警告告诉了我们为什么: 迭代适配器是懒加载的, 然后在这里我们需要消耗迭代器.
+
+修正这个问题消耗迭代器, 我们可以使用 collect 方法, 我们在12章使用过的, 在代码12-1里使用env::args. 这个方法消耗迭代器然后收集结果值到一个集合数据类型.
+
+在代码13-18里, 我们通过从map方法的调用返回的迭代器收集迭代的结果到一个向量. 这个向量最终包含的所有元素来自于原始向量增加1.
+
+文件名: src/main.rs
+#+begin_src rust
+fn main() {
+    let v1: Vec<i32> = vec![1, 2, 3];
+
+    let v2: Vec<_> = v1.iter().map(|x| x + 1).collect();
+
+    assert_eq!(v2, vec![2, 3, 4]);
+}
+#+end_src
+代码 13-18: 调用map方法生成一个新的迭代器然后调用collect方法消耗新的迭代器然后生成一个向量
+
+因为map接收一个必包, 在每一个元素上我们可以指定我们想要执行的任何操作. 这是一个关于当重用Iterator特征提供的迭代行为时必包如何让你自定义一些行为的例子.
+
+** 使用捕获它们环境的必包
+现在我们已经介绍了迭代器, 我们可以展示一个通过filter迭代适配器捕获它们环境的必包的常规用法. 一个迭代器上的filter方法接收一个接收每个来自迭代器的元素然后返回一个布尔的必包. 如果必包返回true, 值将被添加到被filter产生的迭代器. 如果必包返回false, 值将不被添加到结果迭代器.
+
+在代码 13-19里, 我们用一个捕获从它的环境来的变量shoe_size的必包使用filter来迭代一个Shoe结构体实例的集合. 它只会返回指定尺寸的鞋子.
+
+文件名: src/lib.rs
+#+begin_src rust
+#[derive(PartialEq, Debug)]
+struct Shoe {
+    size: u32,
+    style: String,
+}
+
+fn shoes_in_size(shoes: Vec<Shoe>, shoe_size: u32) -> Vec<Shoe> {
+    shoes.into_iter().filter(|s| s.size == shoe_size).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filters_by_size() {
+        let shoes = vec![
+            Shoe {
+                size: 10,
+                style: String::from("sneaker"),
+            },
+            Shoe {
+                size: 13,
+                style: String::from("sandal"),
+            },
+            Shoe {
+                size: 10,
+                style: String::from("boot"),
+            },
+        ];
+
+        let in_my_size = shoes_in_size(shoes, 10);
+
+        assert_eq!(
+            in_my_size,
+            vec![
+                Shoe {
+                    size: 10,
+                    style: String::from("sneaker")
+                },
+                Shoe {
+                    size: 10,
+                    style: String::from("boot")
+                },
+            ]
+        );
+    }
+}
+#+end_src
+代码 13-19: 用一个捕获 shoe_size的必包使用filter方法
+
+shoes_in_size函数接收鞋子的一个向量的所有权和作为参数的鞋子尺寸. 它返回一个只包含指定尺寸的鞋子的向量.
+
+在shoes_in_size里面, 我们调用 into_iter 来创建一个接收向量所有权的一个迭代器. 然后我们调用filter来适配仅仅包含必包返回true的元素的新的迭代器的迭代器.
+
+必包从环境里捕获了shoe_size参数然后和每个鞋子的尺寸进行比较, 只保留指定尺寸的鞋子. 最后, 调用collect 合并迭代适配器返回的值到一个函数返回的向量里.
+
+测试展示了当我们调用 shoes_in_size, 我们仅仅返回和我们指定的值相同尺寸的鞋子.
+
+** 用Iterator特征创建我们自己的迭代器
+我们已经展示了你可以通过在一个向量上调用iter, into_iter或者iter_mut 创建一个迭代器. 你可以从在标准库里的其它的集合类型创建一个迭代器, 比如哈希. 你也可以创建一个你自己的类型通过实现Iteraltor特征做你想做的任何事的迭代器. 就像之前提及的, 你需要提供一个定义的唯一的方法是next方法. 一旦你定义完, 你可以使用所有其它的在Iterator特征里被提供的默认实现的方法!\
+
+展示, 让我们创建一个仅仅从1到5计数的迭代器, 我们将创建一个保存一些值的结构体. 然后我们将创建这个结构体到一个被Iterator实现的迭代器然后在那个实现里使用这个值.
+
+代码13-20 展示了Counter结构体和一个关联的创建Counter实例的new函数的定义:
+
+文件名: src/lib.rs
+#+begin_src rust
+struct Counter {
+    count: u32,
+}
+
+impl Counter {
+    fn new() -> Counter {
+        Counter { count: 0 }
+    }
+}
+#+end_src
+代码 13-20: 定义Counter结构体和有给count一个0的初始值的产生Counter实例的的new函数
+
+Counter结构体有一个叫count的字段. 这个字段保存了一个跟踪迭代器从1到5程序到哪里的u32值. count字段是私有的因为我们想要Counter的实现管理它自己的值. new函数强制在新的实例时count字段有一个0值.
+
+接下来, 通过定义next函数体来指定当迭代器被使用时我们想要发生什么, 我们将为我们的Counter类型实现Iterator特征, 如代码 13-21:
+
+文件名: src/lib.rs
+#+begin_src rust
+struct Counter {
+    count: u32,
+}
+
+impl Counter {
+    fn new() -> Counter {
+        Counter { count: 0 }
+    }
+}
+
+impl Iterator for Counter {
+    type Item = u32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.count < 5 {
+            self.count += 1;
+            Some(self.count)
+        } else {
+            None
+        }
+    }
+}
+#+end_src
+代码 13-21: 在我们的Counter结构体里实现Iterator特征
+
+我们为我们的迭代器设置关联的Item类型为u32, 意味着迭代器将返回u32值. 然后, 也不要担心关联类型, 我们将在第19章覆盖它们.
+
+我们想要我们的迭代器增加1到当前状态, 所以我们初始化count到0所以刚开始它可以返回1, 如果count的值小于5, next将增加count然后返回包裹在Some里的当前值. 一旦count是5, 我们的迭代器将停止递增count然后总是返回None.
+
+** 使用我们Counter迭代器的next方法
+一旦我们实现了Iterator特征, 我们有了一个迭代器! 代码 13-22展示一个测试展示了我们通过在它上面直接的调用next方法可以使用我们Counter结构体的代码器功能, 就像我们之前在迭代器上面在代码13-15里向量里做的.
+
+文件名: src/lib.rs
+#+begin_src rust
+struct Counter {
+    count: u32,
+}
+
+impl Counter {
+    fn new() -> Counter {
+        Counter { count: 0 }
+    }
+}
+
+impl Iterator for Counter {
+    type Item = u32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.count < 5 {
+            self.count += 1;
+            Some(self.count)
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn calling_next_directly() {
+        let mut counter = Counter::new();
+
+        assert_eq!(counter.next(), Some(1));
+        assert_eq!(counter.next(), Some(2));
+        assert_eq!(counter.next(), Some(3));
+        assert_eq!(counter.next(), Some(4));
+        assert_eq!(counter.next(), Some(5));
+        assert_eq!(counter.next(), None);
+    }
+}
+#+end_src
+代码 13-22: 测试next方法实现的功能
+
+这个测试创建一个新的在counter变量里的Counter实例然后重复地调用next, 指定我们已经实现的我们想要迭代器有的行为: 从1到5返回值.
+
+** 使用其它的Iterator方法
+通过定义next方法我们实现了Iterator特征, 所以现在我们可以使用任何的Iterator特征方法的默认实现作为标准库里已有的实现, 因为它们全部使用next方法的功能.
+
+比如, 如果因为一些原因我们想要获取Counter的一个实例产生的值, 把它们和其它跳过第一个值的Counter实例产生的值配对, 把它们每一对乖在一起, 保留这些被3除的结果, 然后把所有这些结果值加起来, 我们也可以这样做, 如在代码13-23里的测试:
+
+文件名: src/lib.rs
+#+begin_src rust
+struct Counter {
+    count: u32,
+}
+
+impl Counter {
+    fn new() -> Counter {
+        Counter { count: 0 }
+    }
+}
+
+impl Iterator for Counter {
+    type Item = u32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.count < 5 {
+            self.count += 1;
+            Some(self.count)
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn calling_next_directly() {
+        let mut counter = Counter::new();
+
+        assert_eq!(counter.next(), Some(1));
+        assert_eq!(counter.next(), Some(2));
+        assert_eq!(counter.next(), Some(3));
+        assert_eq!(counter.next(), Some(4));
+        assert_eq!(counter.next(), Some(5));
+        assert_eq!(counter.next(), None);
+    }
+
+    #[test]
+    fn using_other_iterator_trait_methods() {
+        let sum: u32 = Counter::new()
+            .zip(Counter::new().skip(1))
+            .map(|(a, b)| a * b)
+            .filter(|x| x % 3 == 0)
+            .sum();
+        assert_eq!(18, sum);
+    }
+}
+#+end_src
+代码 13-23: 在我们的Counter迭代器上使用一个Iterator特征的变量
+
+注意zip只产生4对值, 理论上的第5对(5,None) 不会被产生出来, 因为当任意一个它的迭代器产生None时zip返回None.
+
+所有这些方法调用都是可能的因为我们指定了next方法如何运作, 而且标准库为这些调用next的其它方法提供默认实现.
+
+** 改进我们的I/O项目
+有了这些关于迭代器的新知识, 我们可以使用迭代器改进在12章的I/O项目让代码里的位置更加清楚简洁. 让我们看一下迭代器如何改进我们的Config::new函数和serach函数的实现.
+
+*** 使用迭代器去掉克隆
+在代码12-6里, 我们通过索引切片和克隆值添加接收一个字符串切片值的代码然后创建一个Config结构体的实例, 允许Config结构体拥有这些值. 在代码13-24 里, 我们产生Config::new函数的实现, 这就是代码12-23:
+
+文件名: src/lib.rs
+#+begin_src rust
+use std::env;
+use std::error::Error;
+use std::fs;
+
+pub struct Config {
+    pub query: String,
+    pub filename: String,
+    pub case_sensitive: bool,
+}
+
+impl Config {
+    pub fn new(args: &[String]) -> Result<Config, &str> {
+        if args.len() < 3 {
+            return Err("not enough arguments");
+        }
+
+        let query = args[1].clone();
+        let filename = args[2].clone();
+
+        let case_sensitive = env::var("CASE_INSENSITIVE").is_err();
+
+        Ok(Config {
+            query,
+            filename,
+            case_sensitive,
+        })
+    }
+}
+
+pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
+    let contents = fs::read_to_string(config.filename)?;
+
+    let results = if config.case_sensitive {
+        search(&config.query, &contents)
+    } else {
+        search_case_insensitive(&config.query, &contents)
+    };
+
+    for line in results {
+        println!("{}", line);
+    }
+
+    Ok(())
+}
+
+pub fn search<'a>(query: &str, contents: &'a str) -> Vec<&'a str> {
+    let mut results = Vec::new();
+
+    for line in contents.lines() {
+        if line.contains(query) {
+            results.push(line);
+        }
+    }
+
+    results
+}
+
+pub fn search_case_insensitive<'a>(
+    query: &str,
+    contents: &'a str,
+) -> Vec<&'a str> {
+    let query = query.to_lowercase();
+    let mut results = Vec::new();
+
+    for line in contents.lines() {
+        if line.to_lowercase().contains(&query) {
+            results.push(line);
+        }
+    }
+
+    results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn case_sensitive() {
+        let query = "duct";
+        let contents = "\
+Rust:
+safe, fast, productive.
+Pick three.
+Duct tape.";
+
+        assert_eq!(vec!["safe, fast, productive."], search(query, contents));
+    }
+
+    #[test]
+    fn case_insensitive() {
+        let query = "rUsT";
+        let contents = "\
+Rust:
+safe, fast, productive.
+Pick three.
+Trust me.";
+
+        assert_eq!(
+            vec!["Rust:", "Trust me."],
+            search_case_insensitive(query, contents)
+        );
+    }
+}
+#+end_src
+代码 13-24: 从代码12-23 Config::new 函数的重构
+
+现在, 我们不用担心clone调用产生的影响因为我们将在将来去掉它们, 很好,就是现在!
+
+在这里我们需要clone,因为我们在参数args里需要一个带有String元素的切片, 但是new函数拥有args. 为了返回COnfig实例的所有权, 我们不得不克隆来自Config的query和filename字段的值所以Config实例可以拥有这些值.
+
+有了我们关于迭代器的知识, 我们可以修改new函数来作为参数接收一个迭代器的所有权而非借用一个切片. 我们将使用迭代器功能代替检查切片长度的代码和索引到指定的位置. 这将清理COnfig::new函数所做的因为迭代器将访问这些值.
+
+一旦Config::new 取得了迭代器的所有权然后停止使用借用的索引操作, 我们可以从迭代器移除String值到 Config里而不是调用clone然后创建一个新的内存分配.
+
+*** 直接使用迭代器的返回
+打开你的I/O项目 src/main.rs文件, 这应该是这样的:
+
+文件名: src/main.rs
+#+begin_src rust
+use std::env;
+use std::process;
+
+use minigrep::Config;
+
+fn main() {
+    let args: Vec<String> = env::args().collect();
+
+    let config = Config::new(&args).unwrap_or_else(|err| {
+        eprintln!("Problem parsing arguments: {}", err);
+        process::exit(1);
+    });
+
+    // --snip--
+
+    if let Err(e) = minigrep::run(config) {
+        eprintln!("Application error: {}", e);
+
+        process::exit(1);
+    }
+}
+#+end_src
+
+我们将修改我们在12-24里写的main函数的开头到代码13-25, 在我们修改同时 Config::new 之前将编译不过.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::env;
+use std::process;
+
+use minigrep::Config;
+
+fn main() {
+    let config = Config::new(env::args()).unwrap_or_else(|err| {
+        eprintln!("Problem parsing arguments: {}", err);
+        process::exit(1);
+    });
+
+    // --snip--
+
+    if let Err(e) = minigrep::run(config) {
+        eprintln!("Application error: {}", e);
+
+        process::exit(1);
+    }
+}
+#+end_src
+代码 13-25: 传递 env::args的返回值到Config::new
+
+env::args函数返回一个迭代器! 对比收集迭代器的值到一个向量里然后传递一个向量到 Config::new, 现在我们直接传从env::args返回的递迭代器的所有权到 Config::new.
+
+下一步, 我们需要更新 Config::new的定义. 在你的 I/o 项目的 src/lib.rs文件, 让我们修改Config::new的签名为代码13-26. 这还编译不了因为我们需要更新函数体.
+
+文件名: src/lib.rs
+#+begin_src rust
+use std::env;
+use std::error::Error;
+use std::fs;
+
+pub struct Config {
+    pub query: String,
+    pub filename: String,
+    pub case_sensitive: bool,
+}
+
+impl Config {
+    pub fn new(mut args: env::Args) -> Result<Config, &'static str> {
+        // --snip--
+        if args.len() < 3 {
+            return Err("not enough arguments");
+        }
+
+        let query = args[1].clone();
+        let filename = args[2].clone();
+
+        let case_sensitive = env::var("CASE_INSENSITIVE").is_err();
+
+        Ok(Config {
+            query,
+            filename,
+            case_sensitive,
+        })
+    }
+}
+
+pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
+    let contents = fs::read_to_string(config.filename)?;
+
+    let results = if config.case_sensitive {
+        search(&config.query, &contents)
+    } else {
+        search_case_insensitive(&config.query, &contents)
+    };
+
+    for line in results {
+        println!("{}", line);
+    }
+
+    Ok(())
+}
+
+pub fn search<'a>(query: &str, contents: &'a str) -> Vec<&'a str> {
+    let mut results = Vec::new();
+
+    for line in contents.lines() {
+        if line.contains(query) {
+            results.push(line);
+        }
+    }
+
+    results
+}
+
+pub fn search_case_insensitive<'a>(
+    query: &str,
+    contents: &'a str,
+) -> Vec<&'a str> {
+    let query = query.to_lowercase();
+    let mut results = Vec::new();
+
+    for line in contents.lines() {
+        if line.to_lowercase().contains(&query) {
+            results.push(line);
+        }
+    }
+
+    results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn case_sensitive() {
+        let query = "duct";
+        let contents = "\
+Rust:
+safe, fast, productive.
+Pick three.
+Duct tape.";
+
+        assert_eq!(vec!["safe, fast, productive."], search(query, contents));
+    }
+
+    #[test]
+    fn case_insensitive() {
+        let query = "rUsT";
+        let contents = "\
+Rust:
+safe, fast, productive.
+Pick three.
+Trust me.";
+
+        assert_eq!(
+            vec!["Rust:", "Trust me."],
+            search_case_insensitive(query, contents)
+        );
+    }
+}
+#+end_src
+代码 13-26: 更新Config::new的签名到一个期望的迭代器
+
+在env::args函数的标准库文档展示了它返回的迭代器的类型是 std::env::Args. 我们已经更新了Config::new函数的签名所以args参数有了类型 std::env::Args而不是 &[String]. 因为我们得到args的所有权然后我们将通过迭代它修改args, 我们可以添加mut关键字到args参数的指定的地方来让它可修改.
+
+我们也需要指定字符串切片错误类型现在只有 'static 生命周期. 因为我们仅仅返回了字符串字面量, 之前这是真的. 然而, 当我们有一个在参数里的引用, 这可能返回值类型的引用和参数的引用有相同的生命周期. 我们在第10章"省略生命周期"一节里讨论的规则被应用, 然后我们也不需要申明&str的生命周期. 有了args的修改, 省略和生命周期规则不再应用, 然后我们必须指定'static生命周期.
+
+*** 使用Iterator特征方法取代索引
+
+下一步, 我们将修正Config::new的函数体. 标准库文档也提及 std::env::Args实现了Iterator特征, 所以我们知道我们可以在它上面调用next方法! 代码 13-27 更新来自代码 12-23的代码为使用next方法:
+
+文件名: src/lib.rs
+#+begin_src rust
+use std::env;
+use std::error::Error;
+use std::fs;
+
+pub struct Config {
+    pub query: String,
+    pub filename: String,
+    pub case_sensitive: bool,
+}
+
+impl Config {
+    pub fn new(mut args: env::Args) -> Result<Config, &'static str> {
+        args.next();
+
+        let query = match args.next() {
+            Some(arg) => arg,
+            None => return Err("Didn't get a query string"),
+        };
+
+        let filename = match args.next() {
+            Some(arg) => arg,
+            None => return Err("Didn't get a file name"),
+        };
+
+        let case_sensitive = env::var("CASE_INSENSITIVE").is_err();
+
+        Ok(Config {
+            query,
+            filename,
+            case_sensitive,
+        })
+    }
+}
+
+pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
+    let contents = fs::read_to_string(config.filename)?;
+
+    let results = if config.case_sensitive {
+        search(&config.query, &contents)
+    } else {
+        search_case_insensitive(&config.query, &contents)
+    };
+
+    for line in results {
+        println!("{}", line);
+    }
+
+    Ok(())
+}
+
+pub fn search<'a>(query: &str, contents: &'a str) -> Vec<&'a str> {
+    let mut results = Vec::new();
+
+    for line in contents.lines() {
+        if line.contains(query) {
+            results.push(line);
+        }
+    }
+
+    results
+}
+
+pub fn search_case_insensitive<'a>(
+    query: &str,
+    contents: &'a str,
+) -> Vec<&'a str> {
+    let query = query.to_lowercase();
+    let mut results = Vec::new();
+
+    for line in contents.lines() {
+        if line.to_lowercase().contains(&query) {
+            results.push(line);
+        }
+    }
+
+    results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn case_sensitive() {
+        let query = "duct";
+        let contents = "\
+Rust:
+safe, fast, productive.
+Pick three.
+Duct tape.";
+
+        assert_eq!(vec!["safe, fast, productive."], search(query, contents));
+    }
+
+    #[test]
+    fn case_insensitive() {
+        let query = "rUsT";
+        let contents = "\
+Rust:
+safe, fast, productive.
+Pick three.
+Trust me.";
+
+        assert_eq!(
+            vec!["Rust:", "Trust me."],
+            search_case_insensitive(query, contents)
+        );
+    }
+}
+#+end_src
+代码 13-27: 修改Config::new的函数体使用迭代方法
+
+记住env::args返回值的第一个值是程序的名字. 我们想要忽略那个然后获取下一个值, 所以我们第一次调用next然后返回值啥也不做. 第二, 我们调用next来获取我们想要传递进COnfig的query字段的值. 如果next 返回一个Some, 我们使用一个match来抽取值. 如果它返回None, 这意味着没有足够的参数被给到然后我们使用Err值提早返回. 对于filename值我们做一样的事情.
+
+*** 使用迭代适配器让代码更清楚
+我们也可以在我们的I/O项目里使用在search函数里的迭代器带来的优势, 在这里产生的在代码13-28里对比之前在代码12-19;
+
+文件名: src/lib.rs
+#+begin_src rust
+use std::error::Error;
+use std::fs;
+
+pub struct Config {
+    pub query: String,
+    pub filename: String,
+}
+
+impl Config {
+    pub fn new(args: &[String]) -> Result<Config, &str> {
+        if args.len() < 3 {
+            return Err("not enough arguments");
+        }
+
+        let query = args[1].clone();
+        let filename = args[2].clone();
+
+        Ok(Config { query, filename })
+    }
+}
+
+pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
+    let contents = fs::read_to_string(config.filename)?;
+
+    Ok(())
+}
+
+pub fn search<'a>(query: &str, contents: &'a str) -> Vec<&'a str> {
+    let mut results = Vec::new();
+
+    for line in contents.lines() {
+        if line.contains(query) {
+            results.push(line);
+        }
+    }
+
+    results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_result() {
+        let query = "duct";
+        let contents = "\
+Rust:
+safe, fast, productive.
+Pick three.";
+
+        assert_eq!(vec!["safe, fast, productive."], search(query, contents));
+    }
+}
+#+end_src
+代码 13-28: 从代码12-19里search函数的实现
+
+我们可以使用一种更加简洁的方式使用迭代适配方法写这段代码. 做完这些也让我们避免一个可修改的results向量. 函数式编程方式更倾向于最小化规模的可修改状态来让代码更清楚. 去掉可修改状态可以使用一些强制的功能来让搜索并行发生, 因为我们将不管理results向量的并行访问. 代码 13-29展示了这个修改:
+
+文件名: src/lib.rs
+#+begin_src rust
+use std::env;
+use std::error::Error;
+use std::fs;
+
+pub struct Config {
+    pub query: String,
+    pub filename: String,
+    pub case_sensitive: bool,
+}
+
+impl Config {
+    pub fn new(mut args: std::env::Args) -> Result<Config, &'static str> {
+        args.next();
+
+        let query = match args.next() {
+            Some(arg) => arg,
+            None => return Err("Didn't get a query string"),
+        };
+
+        let filename = match args.next() {
+            Some(arg) => arg,
+            None => return Err("Didn't get a file name"),
+        };
+
+        let case_sensitive = env::var("CASE_INSENSITIVE").is_err();
+
+        Ok(Config {
+            query,
+            filename,
+            case_sensitive,
+        })
+    }
+}
+
+pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
+    let contents = fs::read_to_string(config.filename)?;
+
+    let results = if config.case_sensitive {
+        search(&config.query, &contents)
+    } else {
+        search_case_insensitive(&config.query, &contents)
+    };
+
+    for line in results {
+        println!("{}", line);
+    }
+
+    Ok(())
+}
+
+pub fn search<'a>(query: &str, contents: &'a str) -> Vec<&'a str> {
+    contents
+        .lines()
+        .filter(|line| line.contains(query))
+        .collect()
+}
+
+pub fn search_case_insensitive<'a>(
+    query: &str,
+    contents: &'a str,
+) -> Vec<&'a str> {
+    let query = query.to_lowercase();
+    let mut results = Vec::new();
+
+    for line in contents.lines() {
+        if line.to_lowercase().contains(&query) {
+            results.push(line);
+        }
+    }
+
+    results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn case_sensitive() {
+        let query = "duct";
+        let contents = "\
+Rust:
+safe, fast, productive.
+Pick three.
+Duct tape.";
+
+        assert_eq!(vec!["safe, fast, productive."], search(query, contents));
+    }
+
+    #[test]
+    fn case_insensitive() {
+        let query = "rUsT";
+        let contents = "\
+Rust:
+safe, fast, productive.
+Pick three.
+Trust me.";
+
+        assert_eq!(
+            vec!["Rust:", "Trust me."],
+            search_case_insensitive(query, contents)
+        );
+    }
+}
+#+end_src
+代码 13-29: 在search函数的实现里使用迭代器适配方法
+
+回顾search函数的意图在返回所有在contents里包含query的行. 和在13-19里的例子里类似, 这段代码使用 filter适配来收集只有line.contains(query)返回true的行. 然后我们使用collect收集匹配的行到另一个向量里. 更加简单了! 免费做相同的也修改去使用在search_case_insensitive里的代码器方法.
+
+下一个逻辑问题是在你自己的代码里应该选择哪一种样式和为什么: 在代码13-28里的原始实现或者在13-29里的使用迭代器的版本. 更多的rust程序员倾向于使用迭代器的形式. 它对于获取悬挂更加聚合, 但是一旦你获取一个各种迭代适配器的自由和他们做了什么, 迭代器可以更易于理解. 对比于摆弄各种循环和创建新的向量, 这段代码关注于比循环更高级别的对象. 这抽象了一些平几代码的方式, 所以它易于去了解对于这段代码独特的概念, 例如必需传递的迭代器里的每个元素的过滤条件.
+
+但是这种两实现真的等价吗? 直觉的假设可能是更低级别的循环将会更快. 让我们讨论一下性能.
+
