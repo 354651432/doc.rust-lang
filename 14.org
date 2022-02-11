@@ -1,0 +1,644 @@
+* 关于Cargo和Crates.io的更多
+目前为止我们仅仅使用Cargo的最基础的功能来构建, 运行, 和测试我们的代码, 但是它可以做得更多. 在本章,我们将讨论它的其它的一些, 更高级的特性展示给你如何做以下的事情:
++ 通过发行预置自定义你的构建
++ 推送库到 crates.io
++ 使用工作空间组织大型项目
++ 从crates.io 安装二进制
++ 使用自定义命令扩展Cargo
+Cargo可以做甚至更多的我们本章介绍的, 所以对于它所有的功能的所有解释, 见它[[https://doc.rust-lang.org/cargo/][它的文档]]
+
+** 使用发行预置自定义编译
+在rust里, 发行预置被定义和使用允许一个程序有不同的控制编译代码的同选项的不同配置的自定义预置. 每个预置为配置为独立于其它的配置.
+
+cargo有两个主要的预置: 当你运行 cargo build时使用的的dev预置和当你使用carg build --release时的release预置. dev预置被定义为有一个对开发者很好的默认值, 然后release预置对于发行编译有一个很好的默认值.
+
+这些预置的名字可能从你自己的构建的输出里被熟悉:
+#+begin_src shell
+$ cargo build
+    Finished dev [unoptimized + debuginfo] target(s) in 0.0s
+$ cargo build --release
+    Finished release [optimized] target(s) in 0.0s
+#+end_src
+
+在这个建构输出里的dev和release 展示了编译器使用了不同的预置.
+
+Cargo为每一种在项目的 Cargo.tml文件里当这里有任意的 [profile.*]应用的时候的配置. 通过给你的你想要自定义的预置添加 [profile.*] 块, 你可以覆盖默认设置的任意子配置. 比如, 这里是给dev和release预置的opt-level设置的默认值:
+
+文件名: Cargo.toml
+#+begin_src conf
+	[profile.dev]
+opt-level = 0
+
+[profile.release]
+opt-level = 3
+#+end_src
+opt-level设置控制着rust将应用到你的代码的优化数量, 使用一个0到3的范围. 应用更多的优化增加编译时间, 所以如果你在开发模式然后经常编译你的代码, 即使结果代码运行慢一点你也希望更快的编译. 这就是给dev的默认opt-level是0的原因. 当你准备好发行你的代码, 最好加速运行时间. 你将只准备编译你的代码一次, 但是你将运行编译好的程序很多次, 所以发行模式为运行更快的代码权衡更长的编译时间. 这就是为什么默认的给release预置的opt-level是3.
+
+你可以通过在Cargo.toml里添加一个不同的值覆盖任何的默认设置, 如果你想在开发预置里使用等级为1的优化, 我们可以添加这两行到我们的项目 Cargo.toml文件:
+
+文件名: Cargo.toml
+#+begin_src conf
+[profile.dev]
+opt-level = 1
+#+end_src
+
+这段代码覆盖为0的默认设置. 现在当我们运行cargo build时, Cargo将使用给dev的预置加上我们自定义的值给opt-level. 因为我们设置opt-level为1, Cargo将应用比默认的更多优化, 但是不和发行模式一样多.
+
+每个预置的配置选项和默认值的完整列表, 参见Cargo[[https://doc.rust-lang.org/cargo/reference/profiles.html][的文档]].
+
+
+** 发布Crate到Crates.io
+我们使用来自crates.io的包作为我们项目的依赖, 但是你也可以通过发布你自己的包共享你的代码给其它人. 在crates.io的crate注册发布你自己包的源代码, 所以这主要是托管开源的代码.
+
+Rust和Cargo有帮助你给其它人简单的发布包来使用和第一个查找的地方的功能, 下面我们将讨论这些功能然后解释如何发布一个包.
+
+
+
+*** 编写有用的文档注释
+精确的给你的包写文档将帮助其它的用户知道如何和什么时候去使用它们, 所以投入时间写文档是值得的. 在第3章, 我们讨论了如何使用两个斜线//注释rust代码. rust也有一个为文档的特别的注释类型, 通常叫文档注释, 它将生成HTML文档, HTML为用于有兴趣于知道如果使用你的crate同时暴露出你的代码是如何实现的程序员的公共API条目展示文档注释的内容.
+
+文档注释使用一个斜线 ,///,而不是两个为格式化文本而且支持Markdown符号. 在它们文档化的元素前面放置文档注释. 代码 14-1 展示了给一个在叫my_crate的
+crate里的一个add_one函数的文档注释:
+
+文件名: src/lib.rs
+#+begin_src rust
+/// Adds one to the number given.
+///
+/// # Examples
+///
+/// ```
+/// let arg = 5;
+/// let answer = my_crate::add_one(arg);
+///
+/// assert_eq!(6, answer);
+/// ```
+pub fn add_one(x: i32) -> i32 {
+    x + 1
+}
+#+end_src
+代码 14-1: 给一个函数的文档注释
+
+这里, 我们给出了 add_one 函数做什么的描述, 从Examples的头部开始一个段, 然后提供展示如何使用 add_one函数的代码. 我们可以通过运行cargo doc从这段文档生成HTML文档. 这个命令运行和rust一起发布的rustdoc工具然后把生成的HTML文档放g以 target/doc 目录下.
+
+方便起见, 运行 cargo doc --open 将为你当前的 crates的文档(也包含了所有你的crate依赖的文档)构建HTML然后在一个浏览器里打开结果. 导航到add_one函数然后你将看到在文档注释里的文本如何被渲染, 如图 14-1:
+[[https://doc.rust-lang.org/book/img/trpl14-01.png]]
+图 13-1: add_one函数的文档
+
+*** 段的常规使用
+我们在代码14-1里使用 # Examples Markdown标题创建一个在HTML里的有Examples标题的段落这里是一些其它的crate作者通常使用在他们文档里的段落:
++ Panic: 被文档化的函数的场景将恐慌. 不想要他们的程序恐慌的函数的调用者应该确保他们不调用在这些情况的函数
++ Errors: 如果函数返回一个Result, 描述可能发生和什么条件将导致这些错误被返回的错误种类对调用都可以很有用所以他们可以编写代码以不同方式来处理错误的不同种类.
++ Safety: 如果调用函数是 unsafe的(我们在19章讨论不安全代码), 这应该是解释为什么函数不安全和转化函数期望调用者维护的段落.
+
+  大多数的文档注释不需要所有的这些段落, 但这是一个很好的提醒你人们在需要知道的时候调用你的代码将感兴趣的检查列表.
+
+  
+*** 测试的文档注释
+在你的文档注释里添加一些示例代码可有助于展示如果使用你的库, 而且这样做有一个附加的奖励: 运行 carg test 将作为测试运行在你文档里的示例代码! 没有什么比有示例的文档更好的了. 但是没有什么比不能运行的示例更坏了的了因为从文档写写完代码也被修改. 如果我们从代码14-1里对add_one函数带着文档运行 carg test, 我们将在测试结果里看到这样一个段落:
+#+begin_src shell
+   Doc-tests my_crate
+
+running 1 test
+test src/lib.rs - add_one (line 5) ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+#+end_src
+
+现在如果我们修改函数或者示例, 在示例里的assert_eq!恐慌然后再次运行carg test, 我们将看见文档测试捕捉那个例子然后代码它们之间不同步!
+
+*** 注释容器化的元素
+另一种文档注释的形式, //! ,添加文档到包括注释的元素而非添加文档到跟随注释的元素. 我们通过在crate根文件(通常是src/lib.rs)或者在一个模块里使用这种文档注释来作为整体给crate或者模式添加文档.
+
+比例, 如果我们想添加描述my_crate 包含add_one函数的crate的意图的文档, 我们可以添加以//!开始的文档注释到 src/lib.rs文件的开始部分, 如代码 14-2:
+
+文件名: src/lib.rs
+#+begin_src rust
+//! # My Crate
+//!
+//! `my_crate` is a collection of utilities to make performing certain
+//! calculations more convenient.
+
+/// Adds one to the number given.
+// --snip--
+///
+/// # Examples
+///
+/// ```
+/// let arg = 5;
+/// let answer = my_crate::add_one(arg);
+///
+/// assert_eq!(6, answer);
+/// ```
+pub fn add_one(x: i32) -> i32 {
+    x + 1
+}
+#+end_src
+
+注意这里在 //!后面开始的行后面没有任何代码. 因为我们用 //!代替/// 开始注释, 我们给包含这些注释而不是一个跟随在这些注释后面的元素添加文档. 这种情况下, 包含这些注释的元素就是 src/lib.rs文件, 这是crate根文件. 这些注释描述整个crate.
+
+当我们运行 cargo doc --open,这里注释将显示在crate里公共元素下面的在给my_crate的文档的前面页, 如图14-2:
+[[https://doc.rust-lang.org/book/img/trpl14-02.png]]
+图 14-2: 给my_crate渲染文档, 作为一个整体包括描述crate的注释
+
+有元素的文档注释特别有助于描述crate和模块. 使用它们来解释容器的全面意图来帮助你的用户理解crate的组织.
+
+*** 使用pub use导出一个公共API
+在第7章, 我们覆盖了使用mod关键字如何组织我们的代码到模块, 使用pub关键字如何让元素公开, 使用use关键字如何引入元素到作用域. 然而, 当你开发一个crate时对你有意义有结构对你的用户可能不是很方便. 你可能想要以一种包含多级的等级组织你的结构, 但是当想要使用一个你深入定义在结构里的类型的用户可能很难找到类型在是否存在. 你可能也烦忧于进入use my_crate::some_module::autoher_module::UsefulType; 而不是 use my_crate::UselType;.
+
+当发布一个crate时公式API的结构是需要主要考虑的. 如果你的crate有一个很大规模的模块结构时, 使用你的crate的人比你不熟悉结构而且可以对于查找他们想要使用的组件有因难.
+
+好消息是如果对于其它来自其它库的使用结构不是很方便, 可不需要重新调整你内部的组织: 而是, 你可以通过使用pub use重新导出元素让从你的私有结构里很难导出的公共结构. 重新导出让一个地方的元素变成公共元而且在让它在其它地方也公共, 就好像我们定义在了其它地方.
+
+比如, 我们给现在化的艺术概念使用art命名制造了一个库. 有了这个两个模块的库: 一个kinds 模块包含了两个叫PrimaryColor的枚举 和 SecondaryColor模块和一个utils模块包含一个叫mix的函数, 如代码 14-3:
+
+文件名: src/lib.rs
+#+begin_src rust
+//! # Art
+//!
+//! A library for modeling artistic concepts.
+
+pub mod kinds {
+    /// The primary colors according to the RYB color model.
+    pub enum PrimaryColor {
+        Red,
+        Yellow,
+        Blue,
+    }
+
+    /// The secondary colors according to the RYB color model.
+    pub enum SecondaryColor {
+        Orange,
+        Green,
+        Purple,
+    }
+}
+
+pub mod utils {
+    use crate::kinds::*;
+
+    /// Combines two primary colors in equal amounts to create
+    /// a secondary color.
+    pub fn mix(c1: PrimaryColor, c2: PrimaryColor) -> SecondaryColor {
+        // --snip--
+        unimplemented!();
+    }
+}
+#+end_src
+代码 14-3: 一个被组织到kinds和utils模块的元素的art库
+
+图 14-3 显示了对于这个被cargo doc创建的文档的前端页面的样子:
+[[https://doc.rust-lang.org/book/img/trpl14-03.png]]
+图 14-3: 列出 kinds和utils模块的列表的art的文档的前端页面
+
+注意PrimaryColor和SecondaryColor类型没有被列在前端页面上, mix函数也没有. 我们需要点击kinds和 utils来看到它们.
+
+另一个依赖于这个库的crate将使用use语句从art引入元素到当前作用域, 特定当前定义的模块的结构. 代码14-4 展示了一个从art crate使用PrimaryColor和mix元素的crate的例子:
+
+文件名: src/main.rs
+#+begin_src rust
+use art::kinds::PrimaryColor;
+use art::utils::mix;
+
+fn main() {
+    let red = PrimaryColor::Red;
+    let yellow = PrimaryColor::Yellow;
+    mix(red, yellow);
+}
+#+end_src
+代码 14-4: 一个使用art crate的内部结构导出的crate
+
+在14-4里的代码的作者, 他使用art crate, 指出PrimaryColor是在kinds模块里而且mix是在utils模块里. art crate模块的结构和工作在art crate上的开发者关联更紧而且对于想要理解如何使用art 的某人, utils模块不包含任何有用的信息. 对比, art模块的结构导致了困惑因为开发者必须指出在哪里看到, 然后结构不方便因为开发者必须指出在use语句里的模块名.
+
+从公共API里移除内存的组织, 我们可以在14-3里修改art, 添加 pub use 语句来在顶级重新导出元素, 如代码 14-5:
+
+文件名: src/lib.rs
+#+begin_src rust
+//! # Art
+//!
+//! A library for modeling artistic concepts.
+
+pub use self::kinds::PrimaryColor;
+pub use self::kinds::SecondaryColor;
+pub use self::utils::mix;
+
+pub mod kinds {
+    // --snip--
+    /// The primary colors according to the RYB color model.
+    pub enum PrimaryColor {
+        Red,
+        Yellow,
+        Blue,
+    }
+
+    /// The secondary colors according to the RYB color model.
+    pub enum SecondaryColor {
+        Orange,
+        Green,
+        Purple,
+    }
+}
+
+pub mod utils {
+    // --snip--
+    use crate::kinds::*;
+
+    /// Combines two primary colors in equal amounts to create
+    /// a secondary color.
+    pub fn mix(c1: PrimaryColor, c2: PrimaryColor) -> SecondaryColor {
+        SecondaryColor::Orange
+    }
+}
+#+end_src
+代码 14-5: 添加pub use语句重新导出元素
+
+在前端页面上cargo doc为这个crate生成的API文档现在将列出和关联到重新导出, 如图14-4, 让PrimaryColor 和SecondaryColor类型和mix函数容易去发现.
+[[https://doc.rust-lang.org/book/img/trpl14-04.png]]
+图 14-4: 列表重新导出的art的文档的前端页面
+
+art用户也可以看到和使用来自代码14-3内部的结构就像展示在代码 14-4里的, 或者他们可以使用在代码14-5里更方便的结构, 如代码14-6:
+
+文件名: src/main.rs
+#+begin_src rust
+use art::mix;
+use art::PrimaryColor;
+
+fn main() {
+    // --snip--
+    let red = PrimaryColor::Red;
+    let yellow = PrimaryColor::Yellow;
+    mix(red, yellow);
+}
+#+end_src
+代码 14-6: 一个从art使用重新导出的程序
+
+在有很多嵌套模块的情况下, 使用pub use重新导出到顶级可以在使用crate的用户的体验创建一个不同的签名.
+
+创建一个有用的API结构是一种艺术而不是一种科学, 而且你可以迭代的找到对你的用户最好的API. 选择pub use 给你在如何组织你的内部的crate和解耦来自你想展示什么给你的用户的内结构更多的灵活性. 看一下一些你已经安装好的crates的代码来看看是否它们的内部结构和它们的公共API不同.
+
+*** 设置一个 crates.io 账号
+在你发布任何crates前, 你需要在crates.io上创建一个账号然后取得一个API口令. 这样做, 在creates.io访问主页,然后通过GitHub用户登录.(当前GitHub账号是必需的,但是将来这个网站可能支持其它的创建账户的方式)一旦你登录了, 在 https://crates.io/me/ 访问你的账户设置然后接收一个API密钥. 然后使用你的API密钥运行 cargo login命令, 这样:
+#+begin_src shell
+$ cargo login abcdefghijklmnopqrstuvwxyz012345
+#+end_src
+这个命令将通知你的API口令的Cargo然后把它保存在当前的 ~/.cargo/credentials文件里. 注意这个口令是一个秘密: 不要和其它人分享. 如果因为一些原因你和其它人分享了, 你应该撤销它然后在crates.io上生成一个新的口令.
+
+*** 给一个新的crate添加元数据
+即使你已经有了账户, 那么你已经有了一个你想要发布的crate. 在发布之前, 你将添加一些原始数据到你的crate, 添加crate的Cargo.toml文件的[package]段.
+
+你的crate将需要一个唯一的名字. 当你在本地工作在一个crate上时, 你可以随心所欲的命名一个crate. 然而, 在 crates.io上的crate名字先得先得的原则方式被分配. 一旦拿到了一个crate名字, 没人人可以发布一个相同名字的crate. 尝试发布一个crate前, 你将需要查找另一个名字然后编辑在Cargo.toml文件在[package]段下面的name字段来为发布使用新的名字, 如下:
+
+文件名: Cargo.toml
+#+begin_src conf
+	[package]
+name = "guessing_game"
+#+end_src
+
+即使你选择了一个唯一的名字, 当你运行 cargo publish发布crate, 你将得到一个警告和甚至一个错误:
+#+begin_src shell
+$ cargo publish
+    Updating crates.io index
+warning: manifest has no description, license, license-file, documentation, homepage or repository.
+See https://doc.rust-lang.org/cargo/reference/manifest.html#package-metadata for more info.
+--snip--
+error: api errors (status 200 OK): missing or empty metadata fields: description, license. Please see https://doc.rust-lang.org/cargo/reference/manifest.html for how to upload metadata
+#+end_src
+原因是你缺少了一些必需的信息: 一个描述和条款是必需的然后人们将知道你的crate做什么然后在他们可以使用的什么条款下. 纠正这个错误, 你需要在 Cargo.toml文件包含这些信息.
+
+添加一个仅仅一个或者两个包子的描述, 因为在搜索结果的时候它将和你的crate一起出现. 对于 license字段, 你需要给一个条款的确实的值. linux基础软件包数年交换列出了你可以给这个值的标识. 比如他用MIT协议指定你的crate使用的条款, 添加MIT标识:
+
+文件名: Cargo.toml
+#+begin_src conf
+[package]
+name = "guessing_game"
+license = "MIT"
+#+end_src
+如果你想使用在SPDX里没有的协议, 你需要把协议的文本放到一个文件里, 在你的项目里包含那个文件, 然后使用 license 指定那个文件的名字代替使用license键.
+
+哪个一个协议对于你项目合适的手册超出了这本书的范围. 许多rust社区的用户使用相同的方式给他们的项目添加协议, 添加双重的协议MIT或 Apache-2.0. 这个练习表明你可以给你的项目通过使用OR拥有多个协议指定多个协议标识.
+
+有了一个唯一名字, 版本号, 你的描述,和一个添加的协议, 一个准备发布的项目的Cargo.toml文件可以看起来像下面一样:
+
+文件名: Cargo.toml
+#+begin_src conf
+[package]
+name = "guessing_game"
+version = "0.1.0"
+edition = "2018"
+description = "A fun game where you guess what number the computer has chosen."
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+#+end_src
+
+Cargo的文档描述了其它的你可以指定来确保其它人可以更容易的查看和使用你的crate的原始数据.
+
+*** 发布到 crates.io
+现在你已经创建了一个账户, 保存了你的API口令, 选择了你的crate的名字,并且指定了需要的原始数据, 你已经准备好了发布! 发布一个crate上传一个指定的版本到crates.io给其它人使用.
+
+发布一个crate留心因为发布是永久的. 版本永远不可以被重定, 代码也不可以被删除. crates.io的一个主要目标是作为一个永久的代码归档以至于依靠来自crates.io的crates的所有项目构建将持续运作. 允许版本删除将让那个目标变得不可能. 然而, 这里没有限制你可发布的crate版本的数量.
+
+再次运行 cargo publish命令,现在它将成功:
+
+#+begin_src shell
+$ cargo publish
+    Updating crates.io index
+   Packaging guessing_game v0.1.0 (file:///projects/guessing_game)
+   Verifying guessing_game v0.1.0 (file:///projects/guessing_game)
+   Compiling guessing_game v0.1.0
+(file:///projects/guessing_game/target/package/guessing_game-0.1.0)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.19s
+   Uploading guessing_game v0.1.0 (file:///projects/guessing_game)
+#+end_src
+
+恭喜! 现在你已经和rust社区共享了你的代码, 然后任何人可以简单的添加你的crate作为他们项目的依赖.
+
+*** 发布一个已经存在的crate的新版本
+当你对你的crate进行修改和准备发布一个新版本时, 你修改在指定在Cargo.toml文件里的verion值然后重新发布. 使用[[http://semver.org/][逗号版本规则]]来决定一个可行的接下来的版本号是什么根据你所做出来的修改. 然后运行 cargo publish上传新的版本.
+
+*** 使用cargo yank移除来个crates.io的版本
+虽然你不能移除一个crate的前一个版本, 你可以阻止来自作为新的依赖添加它们的任意未来的项目. 当一个crate版本因为一个或者其它的原因被破坏时这很有用. 在那种情况下, Cargo 支持剪切一个crate版本.
+
+当允许所有依靠它继续下载和依靠那个版本的已经存在的项目, 剪切一个版本阻止来自开始依靠那个版本的新的项目. 基本地, 一个剪切意味着所有有一个Cargo.lock的项目将不被破坏, 和已经产生的将来的Cargo.lock文件将使用不了被剪切的版本.
+
+剪切一个crate的一个版本, 运行cargo yank 然后指定你想要剪切的哪一个版本:
+#+begin_src shell
+$ cargo yank --vers 1.0.1
+#+end_src
+
+通过添加 --undo 到命令行, 你可以撤销一个剪切操作然后再次允许项目开始依赖一个版本:
+#+begin_src shell
+$ cargo yank --vers 1.0.1 --undo
+#+end_src
+
+一个剪切操作不删除任何代码, 比如, 剪切功能不故意的删除偶然上传的秘密. 如果那发布了, 你必须立即重置这些秘密.
+
+** Cargo工作空间
+在12章, 我们构建了一个包含一个二进制和一个库的包. 随着你的增加开发, 你可能发现库crate持继变大然后你想深入地要拆分你的包到几个库crate. 这种情况下, cargo提升了一个叫工作空间的功能, 可以帮助你管理串联开发的多个相关的包.
+
+*** 创建一个工作空间
+一个工作空间是一系列的共享相同Cargo.lock和输出目录的包. 让我们使用工作空间创建一个项目--我们将使用不重要的代码以至我们可以集中注意力到工作空间的结构.  有多种方式创建工作空间; 我们将展示一种通用的方式. 我们将有一个包含一个二进制和两个库的工作空间. 二进制, 将提供主要的功能, 然后依靠两个库. 第一个库提升一个add_one函数, 第二个库提供add_two函数. 这三个crate将是同一个工作空间的部分. 我们将以创建一个工作空间的新目录开始:
+
+#+begin_src shell
+$ mkdir add
+$ cd add
+#+end_src
+
+下面, 在add目录, 我们创建配置整个工作空间的Cargo.toml文件. 这个文件将没有[package]段也没有我们在其它cargo.toml里见到的原始数据. 相对的,它将以一个允许我们通过指定我们二进制包路径的方式添加成员到工作空间的[workspace]段开始; 这种情况下, 路径已经添加了:
+
+文件名: Cargo.toml
+#+begin_src conf
+[workspace]
+
+members = [
+    "adder",
+]
+#+end_src
+
+下面, 在add目录里我们运行cargo new创建一个二进制crate:
+#+begin_src shell
+$ cargo new adder
+     Created binary (application) `adder` package
+#+end_src
+
+这一点, 我们可以运行 cargo build建构工作空间. 在add目录下的文件将像这样:
+#+begin_src
+├── Cargo.lock
+├── Cargo.toml
+├── adder
+│   ├── Cargo.toml
+│   └── src
+│       └── main.rs
+└── target
+#+end_src
+在项级工作空间有一个目标目录来给编译好的文件放进去; adder包没有它自己的目标目录. 即使我们从里面的adder目录运行cargo build, 编译好的文件将仍然最终在 add/target而不是 add/adder/target. 在一个工作空间里Cargo如此组织目标目录, 因为在一个工作空间里的crate意味着相互独立. 如果每个crate有了它自己的目标目录, 每个crate将必须重新编译每个其它的在工作空间的crate来生成目标文件到它们自己的目标目录. 通过共享一个目标目录, crate可以避免不必要的重编译.
+
+*** 在工作空间里创建第二个包
+下面, 让我们在工作空间里创建另一个成员包然后叫它 add-one. 修改顶级的Cargo.toml来指定members列表里的add-one的路径:
+
+文件名: Cargo.toml
+#+begin_src conf
+[workspace]
+
+members = [
+    "adder",
+    "add-one",
+]
+#+end_src
+
+然后生成一个新的叫 add-one 的crate:
+#+begin_src shell
+$ cargo new add-one --lib
+     Created library `add-one` package
+#+end_src
+我的add目录现在应该有这些目录和文件:
+#+begin_src
+├── Cargo.lock
+├── Cargo.toml
+├── add-one
+│   ├── Cargo.toml
+│   └── src
+│       └── lib.rs
+├── adder
+│   ├── Cargo.toml
+│   └── src
+│       └── main.rs
+└── target
+#+end_src
+在 add-one/src/lib/rs文件里, 让我们添加一个add_one函数:
+
+文件名: add-one/src/lib.rs
+#+begin_src rust
+pub fn add_one(x: i32) -> i32 {
+    x + 1
+}
+#+end_src
+
+在现在在工作空间我们有了另一个包, 我们可以让有我们的二进制的adder包依赖于有我们的库的add-one包. 首先, 我们需要添加一个路径依赖于 add-one 到adder/cargo.toml.
+
+文件名: adder/Cargo.toml
+#+begin_src conf
+add-one = { path = "../add-one" }
+#+end_src
+Cargo不假设在一个工作空间的Crate将相互依赖, 所以我们需要明确crate之间的依赖关系.
+
+下面, 让我们在adder里使用来自add-one crate的 add_one函数. 打开adder/src/main.rs文件然后在顶部添加一行use引入新的add-one库到当前作用域, 然后修改main函数调用add_one函数, 如代码 14-7.
+
+文件名: adder/src/main.rs
+#+begin_src rust
+use add_one;
+
+fn main() {
+    let num = 10;
+    println!(
+        "Hello, world! {} plus one is {}!",
+        num,
+        add_one::add_one(num)
+    );
+}
+#+end_src
+代码 14-7: 使用来自adder crate的add-one库
+
+让我们在顶级add目录里运行cargo build建构工作空间!
+#+begin_src shell
+$ cargo build
+   Compiling add-one v0.1.0 (file:///projects/add/add-one)
+   Compiling adder v0.1.0 (file:///projects/add/adder)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.68s
+#+end_src
+
+运行来自add目录的二进制, 使用 -p 参数和 cargo run的包名我们可以指定我们想要运行的在工作空间的哪一个包:
+#+begin_src shell
+$ cargo run -p adder
+    Finished dev [unoptimized + debuginfo] target(s) in 0.0s
+     Running `target/debug/adder`
+Hello, world! 10 plus one is 11!
+#+end_src
+这运行了在adder/src/main.rs里的代码, 它依赖了add-one crate.
+
+*** 在工作空间里依赖一个内部包
+注意在工作空间有顶级工作空间只有一个cargo.lock文件而不是每个crate目录有一个Cargo.lock. 这确保了所有的crate使用所有依赖的相同版本. 如果我们添加rand包到adder/Cargo.toml和 add-one/Cargo.toml文件, Cargo将解析这两个到一个rand的版本然后记录在一个,Cargo.lock里. 让在工作空间的的所有crate使用相同的依赖意味着在工作空间里的crate相互之间将一直兼容. 让我们在add-one/Cargo.toml文件里添加 rand crate到[dependencies]段来在add-one crate里使用rand crate:
+
+文件名: add-one/Cargo.toml
+#+begin_src conf
+rand = "0.8.3"
+#+end_src
+
+现在我们可以添加 use rand; 到add-one/src/lib.rs文件, 然后运行add目录运行cargo build来构建整个工作空间将引入然后编译 rand. 我们将得到一个警告, 因为我们没有引用我们引入到作用域的rand:
+#+begin_src shell
+$ cargo build
+    Updating crates.io index
+  Downloaded rand v0.8.3
+   --snip--
+   Compiling rand v0.8.3
+   Compiling add-one v0.1.0 (file:///projects/add/add-one)
+warning: unused import: `rand`
+ --> add-one/src/lib.rs:1:5
+  |
+1 | use rand;
+  |     ^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: 1 warning emitted
+
+   Compiling adder v0.1.0 (file:///projects/add/adder)
+    Finished dev [unoptimized + debuginfo] target(s) in 10.18s
+#+end_src
+现在顶级的Cargo.lock包含了关于add-one依赖于rand的信息. 然后, 虽然rand在工作空间的某处被使用, 我们在工作空间的其它crate里不可以使用它除非我们也添加rand到它们的Cargo.toml文件. 比如, 如果我们添加 use rand;到 adder/src/main.rs 文件给adder包, 我们将得到一个错误:
+#+begin_src shell
+$ cargo build
+  --snip--
+   Compiling adder v0.1.0 (file:///projects/add/adder)
+error[E0432]: unresolved import `rand`
+ --> adder/src/main.rs:2:5
+  |
+2 | use rand;
+  |     ^^^^ no external crate `rand`
+#+end_src
+
+修正这个问题,给adder包编辑Cargo.toml文件然后指明rand也是它的一个依赖. 构建adder包将在Cargo.loc给adder添加rand到依赖列表, 但是没有rand的多余的复本将被下载. Cargo确保了每个在工作空间的在每个包里的crate对rand包的使用将使用相同的版本. 通过工作空间使用相同的rand的版本节省了空间, 因为我们没有多余的几个复本而且确保了在工作空间的crate将相互兼容.
+
+*** 添加一个测试到工作空间
+对于另一个增强, 让我们在 add_one crate里添加一个add_one::add_one函数的测试:
+
+文件名: add-one/src/lib.rs
+#+begin_src rust
+pub fn add_one(x: i32) -> i32 {
+    x + 1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn it_works() {
+        assert_eq!(3, add_one(2));
+    }
+}
+#+end_src
+
+现在我们在顶级 add目录运行 cargo test
+#+begin_src shell
+$ cargo test
+   Compiling add-one v0.1.0 (file:///projects/add/add-one)
+   Compiling adder v0.1.0 (file:///projects/add/adder)
+    Finished test [unoptimized + debuginfo] target(s) in 0.27s
+     Running target/debug/deps/add_one-f0253159197f7841
+
+running 1 test
+test tests::it_works ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running target/debug/deps/adder-49979ff40686fa8e
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests add-one
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+#+end_src
+
+输出的第一段展示了在add-one 里的it_work测试通过了. 接下来的一段展示了在adder里零个测试被发现, 然后最后一段展示了在add-one里0个文档测试被发现. 在工作空间结构运行 cargo test就好像这个将为所有在工作空间的crate运行测试一样.
+
+我们也将在来自顶级目录的工作空间为一个单独的crate运行测试, 通过 -p 参数然后指定我们想要测试的crate的名字:
+
+#+begin_src shell
+$ cargo test -p add-one
+    Finished test [unoptimized + debuginfo] target(s) in 0.00s
+     Running target/debug/deps/add_one-b3235fea9a156f74
+
+running 1 test
+test tests::it_works ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests add-one
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+#+end_src
+
+这里的输出展示了 cargo test 只为add-one运行测试而且没有运行adder的测试.
+
+如果你发布在工作空间的crate到 crates.io, 在工作空间的每个crate将需要被单独发布. cargo publish命令没有 --all 标志或者 -p标志. 所以你必须进入每个crate目录然后为在每个在工作空间的crate运行 cargo publish来发布这些crate.
+
+作为符加练习, 同类似和add-one crate一样的方式添加一个 add-two crate到这个工作空间!
+
+随着你的项目增加, 考虑使用一个工作空间: 它更小易于理解, 单独的组件比一个大的代码块要好. 再者, 让crate在工作空间可以让它们之间协作起来更容易, 如果在同一时间它们经常被修改.
+
+
+
+** 使用cargo instlal安装来自crates.io的二进制
+cargo install命令允许你安装和本地使用二进制crate. 这不是故意的替换系统的包; 这意味着一个为rust开发者来安装其它在 crates.io里共享的工作的便捷方式. 注意你只可以安装只二进制目录的包. 如果crate有一个 src/main.rs文件或者其它被指定为二进制的文件, 一个二进制目标是被创建的可运行的程序, 和它们自己不能运行的但是它适合于包含其它程序的库目标相反. 通常, crate在REAME文件里有关于是否一个包是库,有一个二进制目标,或者两个都有的信息.
+
+所有使用 cargo install案头的二进制被保存在安装根的bin目录. 如果你使用 rustup.rs安装rust而且也没有任何自定义的配置, 这个目录将是 $HOME/.cargo/bin, 确保这个目录在你的$PATH里来运行你使用cargo install安装的程序.
+
+比如, 在第12章, 我们提到的有一个用来搜索文件的grep工具的rust实现叫ripgrep. 如果我们想要案头ripgrep, 我也可以运行以下命令:
+#+begin_src shell
+$ cargo install ripgrep
+    Updating crates.io index
+  Downloaded ripgrep v11.0.2
+  Downloaded 1 crate (243.3 KB) in 0.88s
+  Installing ripgrep v11.0.2
+--snip--
+   Compiling ripgrep v11.0.2
+    Finished release [optimized + debuginfo] target(s) in 3m 10s
+  Installing ~/.cargo/bin/rg
+   Installed package `ripgrep v11.0.2` (executable `rg`)
+#+end_src
+
+输出的倒数第二行n展示了位置和安装的二进制的名字, ripgrep在这种情况下是rg. 只要安装目录在你的$PATH里, 如之前提及的, 你可以运行 rg --help然后开始使用更快的, rust式的工具来搜索文件!
+
+** 使用自定义命令cargo
+cargo被定义为你可以使用子命令扩展它而不需要修改cargo. 如果在你的$PATH有一个名叫 cargo-something的二进制, 你可以通过运行 cargo something运行它好像它是Cargo的子命令一样. 像这样的自定义命令当你运行 cargo --list时也被列出来. 可以使用 cargo install 来案头扩展然后运行它们就像内置于cargo 工具更高级的便捷得溢于Cargo的设计!
+
+*** 总结
+使用cargo共享代码和 crates.io 是使rust生态对更多的不同任务有用的部分. rust标准库很小且稳定, 但是crate易于分享, 使用, 和改进和语言不同的时间线. 不要羞愧于分享有用的代码到 crates.io, 就像它也将对其它的人有用!
+
