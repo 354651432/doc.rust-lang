@@ -18,3 +18,776 @@
 额外地, 我们将覆盖内部可变的模式一个不可变类型暴露一个API给一个内部值, 我们也将讨论引用循环: 它们如何可能泄漏内存和如何预防它们.
 
 让我们深入!
+
+** 使用Box<T> 引用在堆上面的数据
+最直接的智能指针是一个box, 它们的类型被写作 Box<T>. Box允许你在堆上面保存数据而不是栈. 保留在栈上面的是指向堆数据的指针. 引用第4章回顾堆和栈的区别.
+
++ 当你有一个在编译时不知道尺寸的类型然后你想使用在一个需要一个额外的尺寸的上下文的值时
++ 当你有一块大的数据然后你想要转化所有权但确保你这样做的时候数据不被复制
++ 当你想拥有一个值然后你只关心它实现一部分特征而不是一个指定类型的类型
+
+在"使用Box实现递归类型"段落里我们展示第一种情况. 第二种情况, 转化一块大的数据的所有权需要很长的时间, 因为数据是从栈上面复制的. 这种情况下提性能, 我们可以保存堆上面大量的数据到一个box里. 然后, 只有一小部分指针在栈上面被复制, 当它引用在一个地方的数据放到堆上时. 第三种情况被称为特征对象, 而且17章一整章里说了"使用允许不同类型的值的特征对象"仅仅那个主题. 所以你将在17章再次使用你在这里学到的!
+
+*** 使用一个 Box<T> 保存在堆上的数据
+在我们为Box<T>讨论这种使用情况前, 我们将覆盖语法和如何和保存在一个Box<T>里的值交互.
+
+代码 15-1 展示了如何使用一个box来保存一个堆上面的i32值.
+
+文件名: src/main.rs
+#+begin_src rust
+fn main() {
+    let b = Box::new(5);
+    println!("b = {}", b);
+}
+#+end_src
+代码 15-1: 使用一个box保存一个i32值到堆上
+
+我们定义一个变量b来保存指向值5的一个Box的值, 它被分配在了堆上面. 这个程序将输出 b = 5;这种情况下, 我们可以访问在box里数据和如果数据在栈上我们如何做相似. 只像一个被拥有了的值, 当一个box超过作用域, 好比在main函数结尾的b, 它将被回收. 在box(保存在栈上的)回收发生和它指向的数据(保存在堆上).
+
+在堆上放置一个简单值不是很有用, 所以这种方式你自己使用一个box不常见. 在堆上保存一个像i32的值, 默认保存的地方, 是更多的情况. 让我们看一种情况box允许我们去定义当我们没有box的时候我们不被允许的类型.
+
+*** 使用box使用递归类型
+在编译时, rust需要知道一个类型如何获取空间. 一个它们自己的尺寸在编译时不知道的类型是一个递归类型, 这里一个值可以有它们另一部分的有相同类型的值作为它们自己的一部分. 因为这种值的嵌套理论上可以无穷尽, rust不知道一个递归类型的值需要多大的空间, box一个已知的尺寸, 所以通过在一个递归类型定义插入一个box, 你可以有递归类型.
+
+让我们解释一个列表构造器, 这是一种通常在函数式编程语言里的数据类型, 作为一个递归类型的例子. 我们将定义的列表构造器类型除了递归最直接的方式; 因此, 我们将运作的例子里的概念你将进入有关递归类型的更复杂的情况什么时候都将有用.
+
+*** 列表构造器的更多信息
+一个列表构造器是一个来自Lisp编程语言的数据类型和它的方言. 在lisp里, cons函数("construct function"的简写)从它的两个参数构造一个新的对, 这经常是一个简单的类型和其它的对. 这些对包含来自一个列表的对.
+
+cons函数概念让这种方式进入了更多的通用函数式编译语言行话: "构造x到y"非正式地意在容器y后面在一个新的容器开始放置元素x来构造一个新的容器实例.
+
+在构造列表里的每个元素包含两个元素: 当前元素的值和另一个条目. 没有下一个条目的在列表里的最后一个条目只包含一个叫Nil的值. 一个列表构造器被递归地调用cons函数产生. 表示递归的基本情况的典型值是Nil. 注意这不是和在6章里的null或者是nil相似的概念, 这是一个无效的或者没有的值.
+
+虽然函数式编程语言经常使用列表构造器. 在rust里列表构造器不是一个经常使用的数据类型. 在rust里当你有一个元素的列表大多数时间, Vec<T>是一个更好的选择, 更复杂的递归数据类型在各种情况下有用, 但以列表构造器开始, 我们可以解释box如何让我们定义一个递归数据类型.
+
+代码15-2 包含一个给列表构造器的枚举定义. 注意这段代龙编译不过因为List类型还没有一个已知的尺寸,这我们将展示.
+
+文件名: src/main.rs
+#+begin_src rust
+enum List {
+    Cons(i32, List),
+    Nil,
+}
+
+fn main() {}
+#+end_src
+代码 15-2: 第一次尝试定义一个枚举来表现一个i32的列表构造器数据结构
+#+begin_quote
+注意: 为这个例子里的意图我们实现一个只保存i32值的列表构造器. 我们可以使用泛型来实现它, 就像我们在第10章已经讨论的, 来定义一个可以保存任何值的列表构造器.
+#+end_quote
+
+使用一个List类型来保存列表 1,2,3 就像在代码 15-3 里的代码:
+
+文件名: src/main.rs
+#+begin_src rust
+enum List {
+    Cons(i32, List),
+    Nil,
+}
+
+use crate::List::{Cons, Nil};
+
+fn main() {
+    let list = Cons(1, Cons(2, Cons(3, Nil)));
+}
+#+end_src
+代码 15-3: 使用List枚举保存列表 1,2,3
+
+第一个cons值保存1和另一个list值. List值是另一个保存2和另一个list值的cons值. List值是一个更多的保存3和一个List值,它是最终的Nil值的cons值, 非递归的变量标志着列表的结束.
+
+如果我们尝试编译在代码 15-3 里的代码,我们将得到被显示在代码 15-4里的错误消息:
+
+#+begin_src shell
+$ cargo run
+   Compiling cons-list v0.1.0 (file:///projects/cons-list)
+error[E0072]: recursive type `List` has infinite size
+ --> src/main.rs:1:1
+  |
+1 | enum List {
+  | ^^^^^^^^^ recursive type has infinite size
+2 |     Cons(i32, List),
+  |               ---- recursive without indirection
+  |
+help: insert some indirection (e.g., a `Box`, `Rc`, or `&`) to make `List` representable
+  |
+2 |     Cons(i32, Box<List>),
+  |               ^^^^    ^
+
+error[E0391]: cycle detected when computing drop-check constraints for `List`
+ --> src/main.rs:1:1
+  |
+1 | enum List {
+  | ^^^^^^^^^
+  |
+  = note: ...which again requires computing drop-check constraints for `List`, completing the cycle
+  = note: cycle used when computing dropck types for `Canonical { max_universe: U0, variables: [], value: ParamEnvAnd { param_env: ParamEnv { caller_bounds: [], reveal: UserFacing }, value: List } }`
+
+Some errors have detailed explanations: E0072, E0391.
+For more information about an error, try `rustc --explain E0072`.
+error: could not compile `cons-list` due to 2 previous errors
+#+end_src
+代码 15-4: 当尝试定义一个递归枚举时我们得到的错误
+
+错误指出这个类型"有无穷的尺寸"原因是我们定义的List有一个变量是递归的: 它直接地保存了另一个自己的值. 结果是, rust不能计算出它需要多少空间来保存一个List值. 让我们简单分解我们得到这个错误的原因. 首先, 让我们看一下rust如何决定它需要多少空间来保存一个不递归的类型的值.
+
+*** 计算一个非递归类型的尺寸
+当我们讨论定义在第6章的枚举时, 回顾我们在代码6-2定义的Message枚举:
+#+begin_src rust
+enum Message {
+    Quit,
+    Move { x: i32, y: i32 },
+    Write(String),
+    ChangeColor(i32, i32, i32),
+}
+
+fn main() {}
+#+end_src
+决定给一个Message值需要多少空间来分配, rust扫描每个变量一看哪个变量需要最大的空间. rust发现:Message::Quit 不需要任何空间, Message::Move 需要足够的空间来保存两个i32值, 等等. 因为只有一个变量将被使用, 一个Message值需要的的最大值是它可以保存的它的变量的大最的空间.
+
+比如这里和当rust尝试决定像在代码15-2里的List枚举需要的一个递归类型需要多少空间时发生了什么. 编译器通过查看cons变量开始, 它保存了一个类型i32的值和类型List的值. 因此, cons需要一块大小和一个i32加上一个List的大小的空间的量. 计算出List类型需要多少内存, 编译器查看变量,从Cons变量开始. Cons变量保存一个类型i32的值和一个类型List的值, 然后这无休止的处理下去, 如图 15-1.
+[[https://doc.rust-lang.org/book/img/trpl15-01.svg]]
+图15-1 :一个由无休止的Cons变量结成的无休止的List
+
+
+*** 使用一个Box<T>来得到一个已经尺寸的递归类型
+对于递归定地定义类型rust计算不出多少空间需要分配, 所以编译器给出了在 15-4里的错误, 但是这个错误也包含这个有用的建议:
+#+begin_src
+help: insert some indirection (e.g., a `Box`, `Rc`, or `&`) to make `List` representable
+  |
+2 |     Cons(i32, Box<List>),
+  |               ^^^^    ^
+#+end_src
+在这个建议里, "indirection"意味着对比直接地保存一个值, 通过保存一个值的指针我们将修改数据结构来非直接地使用一个值.
+
+因为一个Box<T>是一个指针, rust总是知道一个Box<T>需要多少空间: 一个指针的尺寸不会根据它指向的数据的大小而改变. 这意味着我们放一个 Box<T>到Cons变量里而不是直接地另一个List值. Box<T>将指向下一个将在堆上的List值而不是插入Const变量. 概念上, 我们依然了一个列表, 以列表"保存"另一个列表被创建, 但是这种实现现在更像是在下一个元素的后面放置元素而不是插入下一个.
+
+我可以修改在代码15-2里的List枚举的定义和在列在代码15-3里的List的用法为在15-5里的代码, 它将可以编译:
+
+文件名: src/main.rs
+#+begin_src rust
+enum List {
+    Cons(i32, Box<List>),
+    Nil,
+}
+
+use crate::List::{Cons, Nil};
+
+fn main() {
+    let list = Cons(1, Box::new(Cons(2, Box::new(Cons(3, Box::new(Nil))))));
+}
+#+end_src
+代码 15-5: 为了有一个已知的内存使用Box<T>的List的定义
+
+Cons变量将需要一个i32的大小加上保存box指针的数据的空间. Nil变量没有保存值, 所以它比Cons需要更少的空间. 现在我们知道任何List值将有i32的尺寸加上box指针数据的尺寸. 使用一个box, 我们将打破无休止, 递归链, 所以编译器可以计算出定需要来保存一个List值的尺寸. 图15-2展示Cons变量现在像什么.
+[[https://doc.rust-lang.org/book/img/trpl15-02.svg]]
+图 15-2: 因为Cons保存一个Box的不是无限尺寸的List
+
+Box仅仅提供了间接和堆分配; 它们没有其它任何特别的能力, 像这些我们将看到其它智能指针类型. 它们也没有这些特别能力导致的任何性能的负载, 所以在像列表构造器间接是我们需要的唯一功能的情况下它们可以很有用. 我们也将在17章看到更多的box的用法.
+
+Box<T>类型是一个智能指针因为它实现了Deref特征, 这允许Box<T>值可以像引用一个被对待. 当一个Box<T>值超出作用域, box指向的堆数据也被清理因为Drop特征的实现. 让我们解释更多的解释这两个特征. 这两个特性将是更重要于我们在剩下的章节里讨论的其它智能指针类型提供的功能更重要.
+
+
+** 使用Deref特性像常规引用一样处理智能指针
+实现Deref特性允许你自定义解引用操作符的行为, *(不同与乘法或者是通用匹配), 以一种一个智能指针可以被处理为一个常规引用的方式实现Deref, 你以写操作在引用上的代码然后使用有智能指针的代码.
+
+让我们第一次看一下使用规则指针解引用如何运作. 然后我们将尝试定义一个行为像Box<T>一样的自定义类型, 然后看看为什么解引用操作在我们新定义的类型上不能像一个引用一样操作. 我们将解释实现Deref特性如何让智能指针用这种和引用相似的方式成为可能. 然后我们将看到rust的解引用强制特性和它如何让我们与引用或者智能指针一起运作.
+
+#+begin_quote
+注意: 我们将要构建的MyBox<T>类型和真实的Box<T>有一个很大的不同:我们的版本将不存储它的数据在堆上. 我们将关注这个例子在Deref, 所以数据实际被存储在哪里比起指针一样的行为是不重要的.
+#+end_quote
+
+*** 使用解引用操作跟随值的指针
+一个常规的引用是一个指针的类型, 而且一个指针的思考方式是一个保存一些其它东西的值的箭头. 在代码 15-6里, 我们给一个i32值创建了一个引用然后使用解引用操作跟随引用到它的数据.
+
+文件名: src/main.rs
+#+begin_src rust
+fn main() {
+    let x = 5;
+    let y = &x;
+
+    assert_eq!(5, x);
+    assert_eq!(5, *y);
+}
+#+end_src
+代码 15-6: 使用解引用操作跟随一个引用到i32值
+
+变量x保存一个i32值5. 我们设置y等于一个到x的引用. 我们可以假定x是等于5.然而如果我们想要创建一个关于在y里面的值的假设,我们必须使用 *y来跟随它指向的值的引用(解引用). 一旦我们解引用y, 我们获得了数字值y的权限, y指向我们可以和5比较的点.
+
+如果我们尝试写assert_eq!(5,y); 相对的, 我们将得到这样的解译错误:
+#+begin_src shell
+$ cargo run
+   Compiling deref-example v0.1.0 (file:///projects/deref-example)
+error[E0277]: can't compare `{integer}` with `&{integer}`
+ --> src/main.rs:6:5
+  |
+6 |     assert_eq!(5, y);
+  |     ^^^^^^^^^^^^^^^^^ no implementation for `{integer} == &{integer}`
+  |
+  = help: the trait `PartialEq<&{integer}>` is not implemented for `{integer}`
+  = note: this error originates in the macro `assert_eq` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+For more information about this error, try `rustc --explain E0277`.
+error: could not compile `deref-example` due to previous error
+#+end_src
+
+把一个数字和一个指向数字的引用比较是不允许的因为它们类型不同. 我们必须使用解引用操作来跟随引用到它指向的值.
+
+*** 像解引用一样使用Box<T>
+我们可以重定在代码15-6里的代码来使用一个Box<T>代替一个引用; 解引用操作将运作,如代码15-7:
+
+文件名: src/main.rs
+#+begin_src rust
+fn main() {
+    let x = 5;
+    let y = Box::new(x);
+
+    assert_eq!(5, x);
+    assert_eq!(5, *y);
+}
+#+end_src
+代码 15-7: 在一个Bix<i32>里使用解引用操作
+
+代码15-7和代码15-6唯一的不同是这里我们设置y到一个box指针指向一个x值的复本的实例而不是一个指向x的值的引用. 最后一个断言, 我们可以使用使用当y是一个引用时我们所做过的相同的方式解引用操作来跟随box指针. 下一步, 我们将解释使用我们自己的box类型关于使用让们可以使用解引用操作的Box<T>指定的是什么.
+
+*** 算定我们自己的智能指针
+让我们构建一个和标准库提供的Box<T>相似的智能指针来体验智能指针如何默认和引用表现得不同. 然后我们将看到如何去添加使用解引用操作的能力.
+
+Box<T>是最终定义为使用一个元素的一个元组, 所以代码15-8使用相同的方式定义一个MyBox<T>类型. 我们也将定义一个new函数来匹配定义在Box<T>里的new函数.
+
+文件名: src/main.rs
+#+begin_src rust
+struct MyBox<T>(T);
+
+impl<T> MyBox<T> {
+    fn new(x: T) -> MyBox<T> {
+        MyBox(x)
+    }
+}
+
+fn main() {}
+#+end_src
+代码 15-8: 定义一个MyBox<T>类型
+
+我们定义了一个叫MyBox的结构体然后申明了一个泛型参数T, 因为我们想要我们的类型保存任何类型的值. MyBox类型是一个有一个T类型元素的元组结构体. MyBox::new函数获取一个类型为T的参数然后返回一个保存传入的值的MyBox实例.
+
+让我们在代码15-7里尝试添加main函数到代码15-8然后改变它来使用我们定义的MyBox<T>类型代替Box<T>. 在代码 15-9里的代码将编译失败因为rut档知道如何去解引用MyBox.
+
+文件名: src/main.rs
+#+begin_src rust
+struct MyBox<T>(T);
+
+impl<T> MyBox<T> {
+    fn new(x: T) -> MyBox<T> {
+        MyBox(x)
+    }
+}
+
+fn main() {
+    let x = 5;
+    let y = MyBox::new(x);
+
+    assert_eq!(5, x);
+    assert_eq!(5, *y);
+}
+#+end_src
+代码 15-9: 以我们使用引用和Box<T>的相同方式尝试使用MyBox<T>
+
+这里是最终编译错误:
+#+begin_src shell
+$ cargo run
+   Compiling deref-example v0.1.0 (file:///projects/deref-example)
+error[E0614]: type `MyBox<{integer}>` cannot be dereferenced
+  --> src/main.rs:14:19
+   |
+14 |     assert_eq!(5, *y);
+   |                   ^^
+
+For more information about this error, try `rustc --explain E0614`.
+error: could not compile `deref-example` due to previous error
+#+end_src
+我们的MyBox<T> 类型不能解引用, 因为我们还没在我们的类型上实现那个能力. 使用 * 运算符如何解引用, 我们实现Deref特性.
+
+*** 通过实现Deref特性像一个引用一样处理一个类型
+就像在第10章讨论的, 实现一个属性, 我们需要为特性需要的方法提供实现. 标准库提供的Deref特性需要我们实现一个叫deref的方法, 这个方法借用self然后返回一个内部数据的引用. 代码15-10包含一个deref的实现来添加MyBox的定义:
+
+文件名: src/main.rs
+#+begin_src rust
+use std::ops::Deref;
+
+impl<T> Deref for MyBox<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+struct MyBox<T>(T);
+
+impl<T> MyBox<T> {
+    fn new(x: T) -> MyBox<T> {
+        MyBox(x)
+    }
+}
+
+fn main() {
+    let x = 5;
+    let y = MyBox::new(x);
+
+    assert_eq!(5, x);
+    assert_eq!(5, *y);
+}
+#+end_src
+代码 15-10: 在MyBox<T>上实现Deref
+
+type Target = T;语法为Deref特性的使用定义一个关联的类型. 关联类型和定义一个泛型参数有一点轻微的不同, 但是现在你不需要担心它们, 我们将在19章详细覆盖它们.
+
+我们使用 &self.0 填充deref方法的方法体所以 deref返回一个我们想要使用*操作访问的值的引用. 在代码15-9里的main函数现在在MyBox<T>值上调用*编译
+, 然后断言通过!
+
+没有Deref特性, 编译器只能解引用 & 引用, deref 方法给了编译器一个获取一个实现了Deref的任何类型的值而且调用deref方法来获得一个一个它知道如何解引用的 & 引用的能力.
+
+在代码 15-9里当我们访问 *y, 在幕后rust实际上运行这段代码:
+
+#+begin_src rust
+*(y.deref())
+#+end_src
+rust通过一个到deref方法的调用替代了*操作和当一个计划的解引用所以我们不需要思考关于我们需不需要调用deref方法. 这个rust特性让我们写函数同样地我们是否有一个常规引用还是一个实现Deref的类型的代码.
+
+deref方法返回一个值的引用的原因, 和在 *(y.deref())小括号外的计划的解引用仍然是必需的, 是所有权系统. 如果 deref方法直接返回值代替一个值的引用, 值将被从自己移出. 在这种情况下我们不想获取在MyBox<T>里的值的所有权或者大多数情况下我们使用解引用的地方.
+
+注意*操作被一个deref方法的调用代替然后当一个*操作的调用只有一次, 每次我们使用我们代码里的*. 因为*操作的代码不永久递归, 我们以类型i32的数据结束, 它匹配在代码15-9里的assert_eq!里的5.
+
+*** 使用函数和方法隐含的Deref强制
+Deref强制是一个rust在函数或者方法上执行参数的便利. Deref强制只在实现了Deref特性的类型上运作. Deref强制转化一个特定的类型到一个其它类型的引用. 比如, deref强制可以转化 &String到&str 因为String实现返回&str的Deref特性. Deref强制当我们传递一个引用给一个特定类型的值作为一个不匹配在函数或者方法里定义的参数类型函数或者方法的参数自动发生. 一系列对deref方法的调用转化我们提供的类型到参数需要的类型.
+
+Deref强制已经被添加到rust所以程序员写方法或者函数调用不需要添加明确的引用和使用 &和*的解引用. deref强制特性也让我们写可以运作于其它引用或者智能指针的代码.
+
+在行为上看deref强制, 让我们使用我们在代码15-8里定义的MyBox<T>类型和我们添加到15-10里的Deref的实现. 代码15-11展示了一个有一个字符串切片的函数的定义:
+
+文件名: src/main.rs
+#+begin_src rust
+fn hello(name: &str) {
+    println!("Hello, {}!", name);
+}
+
+fn main() {}
+#+end_src
+代码 15-11: 一个有类型&str的name参数的hello函数
+
+我们可以使用一个字符串切片作为参数调用hello函数, 如 hellp("Rust"); Deref强制让使用一个到一个MyBox<String>的值的引用调用hello成为了可能, 如代码 15-12:
+
+文件名: src/main.rs
+#+begin_src rust
+use std::ops::Deref;
+
+impl<T> Deref for MyBox<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+struct MyBox<T>(T);
+
+impl<T> MyBox<T> {
+    fn new(x: T) -> MyBox<T> {
+        MyBox(x)
+    }
+}
+
+fn hello(name: &str) {
+    println!("Hello, {}!", name);
+}
+
+fn main() {
+    let m = MyBox::new(String::from("Rust"));
+    hello(&m);
+}
+#+end_src
+代码 15-12: 使用一个到MyBox<String>值的引用调用hello, 它可以运作因为deref机制
+
+这里我们使用&m参数调用hello函数, 这是一个MyBox<String>值的引用. 因为我们在代码15-10里实现了在MyBox<T>上的Deref特性, rust可以通过调用deref转化 &MyBox<String>到&String, 标准库提供一个在返回一个字符串切片的String上的Deref的实现, 而且这是在Deref的API文档里. rust双调用deref转化&String到&str, 这匹配了hello函数的定义.
+
+如果rust没有实现deref机制, 我们将写在15-13里的代码而不是在15-12里的代码来使用一个类型&MyBox<String>的值调用hello.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::ops::Deref;
+
+impl<T> Deref for MyBox<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+struct MyBox<T>(T);
+
+impl<T> MyBox<T> {
+    fn new(x: T) -> MyBox<T> {
+        MyBox(x)
+    }
+}
+
+fn hello(name: &str) {
+    println!("Hello, {}!", name);
+}
+
+fn main() {
+    let m = MyBox::new(String::from("Rust"));
+    hello(&(*m)[..]);
+}
+#+end_src
+代码 15-13: 如果rust没有deref强制我们将要写的代码
+
+(*m)解引用MyBox<String>到一个String, 然后 &和[..]接收一个等于整个字符串的String的字符串切片来匹配hello的签名. 没有deref强制的代码更难于阅读,写, 和理解所有这些符号的关联. deref机制允许rust自动的为我们处理这些转化.
+
+当 Deref特性被定义为类型关联的, rust将分析类型然后使用Deref::deref尽可能多的获取一个匹配参数类型的引用. Deref::deref需要被插入的次数的数量是编译时被解决的, 所以这里没有为了获取deref机制的优势的运行时的开销!
+
+*** Deref机制如何与可变类型交互
+与你如何使用Deref特性来在一个可变引用上重写 * 操作类似, 你可以使用DerefMut特性来在可变引用上重定*操作.
+
+当它发现在这三种情况下的类型和特性实现时, rust执行deref机制:
++ 当 T: Deref<Target=U> 时 转化 &T 到 &U
++ 当 T: DerefMut<Target=U> 时 转化 &mut T 到&mut U
++ 当 T:Deref<Target=U> 时 转化&mut T到&U
+
+前两种情况和可变类型的期望相同. 第一种情况如何你有一个 &T,和实现了Deref来相同类型的U的T, 你可以通过转化得到 &U. 第二种情况对可变引用相同的deref机制发生.
+
+第三种情况有点复杂: rust将强制一个可变引用到一个不可变引用. 但是反过来不可能: 不可变引用将永远不强制到一个可变引用. 因为借用规则, 如果你有一个可变引用, 可变引用必需是那块代码的唯一引用(否则,程序编译失败). 转化一个可变引用到一个不可变引用需要初始的不可变引用是那块代码的唯一的不可变引用,但是借用规则不允许那种情况. 因此, rust不能假设转化一个不可变引用到一个可变引用是可能的.
+
+** 使用Drop特性在清理的时候运行代码
+智能指针模式的第二个特性是Drop, 它让你自定义当一个值将超出作用域时发生了什么. 你可以在任何的类型上给Drop特性提供一个实现, 然后你指定的代码可以被用来释放像文件或者网络连接的资源. 我们在智能指针的上下文里介绍Drop因为Drop特性的功能当实现一个智能指针时最常用. 比如, 当一个Box<T>被释放,它将释放box指向的在堆上的空间.
+
+在一些语言里, 程序员必须每次他们结束使用一个智能指针的实例时调用代码来释放内存或者资源. 如果他们忘记了, 系统可能变成超载然后崩溃. 在rust里, 当一个值超出作用域时你可以指定的代码的一分部来运行,编译器将自动地插入这段代码. 结果是, 你不需要关心在一个一个一个特定类型结束的实现的程序的每个清理代码的地方, 你也不会漏泄资源!
+
+通过实现Drop特性指定需要运行的代码. Drop特性需要你实现一个叫Drop的方法, 它获取一个到self的可变引用. 当rust调用drop时看看, 现在让我们用println!语法实现drop.
+
+代码 15-14展示一个CustomSmartPointer 结构体它的唯一的方法是当它的实例超出作用域它将输出 Dropping CustomSmartPointer!. 当rust运行drop方法时这个例子展示了.
+
+文件名: src/main.rs
+#+begin_src rust
+struct CustomSmartPointer {
+    data: String,
+}
+
+impl Drop for CustomSmartPointer {
+    fn drop(&mut self) {
+        println!("Dropping CustomSmartPointer with data `{}`!", self.data);
+    }
+}
+
+fn main() {
+    let c = CustomSmartPointer {
+        data: String::from("my stuff"),
+    };
+    let d = CustomSmartPointer {
+        data: String::from("other stuff"),
+    };
+    println!("CustomSmartPointers created.");
+}
+#+end_src
+代码 15-14: 一个在我们放置我们清理代码的地方实现Drop特性的CustomSmartPointer 结构体
+
+Drop特性被预加载了, 所以我们不需要引用它到作用域, 我们在ComstomerSmartPoint里实现Drop特性然后操作一个给调用println!的drop函数的实现. drop函数的函数体是你可以放置任何当一个你的类型的实例超出作用域你想要运行的逻辑的地方. 当rust将运行drop时, 在这里我们输出一些文本来展示.
+
+在main, 我们创造两个ComstomerSmartPorinter的实例然后输出 CustomSmartPointer Created, 在main的结尾, 我们的CustomSmartPointer实例将超出作用域, 然后rust将调用我们放在drop方法里的代码输出我们的最终消息, 注意我们不需要明确地调用drop方法.
+
+当我们运行这个程序, 我们将看到如下输出:
+#+begin_src shell
+$ cargo run
+   Compiling drop-example v0.1.0 (file:///projects/drop-example)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.60s
+     Running `target/debug/drop-example`
+CustomSmartPointers created.
+Dropping CustomSmartPointer with data `other stuff`!
+Dropping CustomSmartPointer with data `my stuff`!
+#+end_src
+当我们的实现超出作用域时,rust自动地为我们调用drop, 调用我们指定的代码. 变量以和它们创建的相反的顺序被销毁, 所以d在c之后被销毁. 这个例子给了你一个drop方法如何运作的可视化的指引; 通常你想要指定你的类型需要运行的清理代码而不是一个输出消息.
+
+*** 使用 std::mem::drop提前销毁一个值
+不幸地, 禁用自动的drop功能不直接. 禁用drop 通常不是必需的; Drop特性的全部点是它被关注于自动化的. 偶尔, 然后, 你想要提前的清理一个值. 一个例子当使用管理锁的智能指针: 你可以想要释放锁的drop方法强制执行以至于在相同作用域的其它代码可以申请这个锁. rust不让你手动地调用Drop特性的drop方法, 而是当你想要强制一个值在它作用域之前被销毁你必须调用标准库提供的 std::mem::dtop函数.
+
+如果我们尝试手动调用Drop特性的drop方法, 修改来自代码15-14的main函数, 如代码15-15, 我们将得到一个编译错误:
+
+文件名: src/main.rs
+#+begin_src rust
+struct CustomSmartPointer {
+    data: String,
+}
+
+impl Drop for CustomSmartPointer {
+    fn drop(&mut self) {
+        println!("Dropping CustomSmartPointer with data `{}`!", self.data);
+    }
+}
+
+fn main() {
+    let c = CustomSmartPointer {
+        data: String::from("some data"),
+    };
+    println!("CustomSmartPointer created.");
+    c.drop();
+    println!("CustomSmartPointer dropped before the end of main.");
+}
+#+end_src
+代码 15-15: 尝试手动调用来自Drop特性的drop方法来过早地清理
+
+当我们尝试编译这段代码, 我们将得到这个错误:
+#+begin_src shell
+$ cargo run
+   Compiling drop-example v0.1.0 (file:///projects/drop-example)
+error[E0040]: explicit use of destructor method
+  --> src/main.rs:16:7
+   |
+16 |     c.drop();
+   |     --^^^^--
+   |     | |
+   |     | explicit destructor calls not allowed
+   |     help: consider using `drop` function: `drop(c)`
+
+For more information about this error, try `rustc --explain E0040`.
+error: could not compile `drop-example` due to previous error
+#+end_src
+
+这个错误消息指出我们不允许明确地调用drop. 错误消息使用析构函数术语, 这是清理一个实例的函数的通用编程术语. 一个析构函数是类似于一个构造函数, 它创建一个实例. 在rust里的drop函数是一种特别的析构.
+
+rust不让我们直接地调用drop因为rust将在main的结尾自动地调用值上面的drop. 这将是一个双重释放错误, 因为rust将不尝试清理相同的值两次.
+
+我们不可以禁用当一个值超出作用域时的drop的自动插入, 而且我们不能明确地调用drop方法. 所以, 如果我们想强制一个值过早的被清理, 我们可以脯和 std::mem::drop函数.
+
+std::mem::drop函数不同于在Drop特性上的drop方法, 我们通过传递我们想要强制被过早销毁的值作为参数调用它, 这个函数在预加载列表里, 所以我们修改在代码15-15里的main为调用drop函数, 如代码15-16:
+
+文件名: src/main.rs
+#+begin_src rust
+struct CustomSmartPointer {
+    data: String,
+}
+
+impl Drop for CustomSmartPointer {
+    fn drop(&mut self) {
+        println!("Dropping CustomSmartPointer with data `{}`!", self.data);
+    }
+}
+
+fn main() {
+    let c = CustomSmartPointer {
+        data: String::from("some data"),
+    };
+    println!("CustomSmartPointer created.");
+    drop(c);
+    println!("CustomSmartPointer dropped before the end of main.");
+}
+#+end_src
+代码 15-16: 调用 std::mem::drop来明确地在它超出作用域前销毁一个值
+
+运行这段代码将输出如下:
+#+begin_src shell
+$ cargo run
+   Compiling drop-example v0.1.0 (file:///projects/drop-example)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.73s
+     Running `target/debug/drop-example`
+CustomSmartPointer created.
+Dropping CustomSmartPointer with data `some data`!
+CustomSmartPointer dropped before the end of main.
+#+end_src
+
+文本 "Dropping CustomSmartPointer with data `some data`!"被在"CustomSmartPointer created"和"CustomSmartPointer dropped before the end of main."之间输出, 表明了drop方法在那个点被调用来销毁c.
+
+你可以用很多方法使用被指定在一个Drop特性实现里的代码来让清理更加方便和安全: 比如, 你可以使用它来创建你自己的内存分配器! 有了Drop特性和rust的所有权系统, 你不用必须记住清理, 因为rust自动做了这些.
+
+你也不用担心偶尔清理仍然在使用的值导致的问题: 确保引用一直有效的所有权系统也确保了当值不再被使用时,drop只被调用一次.
+
+现在我们解释了Box<T>和智能指针的一些特性, 让我们看一下定义在标准库的其它的智能指针.
+
+** Rc<T>, 引用计数智能指针
+在多数情况下, 所有权很清晰: 你明确地知道哪个变量拥有一个给定的值. 然而, 有一些情况一个简单的值可能有多个所有者. 比如, 在图数据结构, 多条边框指向相同的结点, 那个结点概念上被所有的指向它的边拥有, 除非它不再有任何的边指向它否则一个结点不应该被清理.
+
+为了使用多拥有权, rust有一个叫Rc<T>的类型, 这是一个引用计数的简写. Rc<T>类型跟踪一个值的引用的数量来决定值是否还在使用. 如果一个值有零个引用, 值可以被不用任何引用变成非法地清理.
+
+想象Rc<T>是一个在家里的电视, 当一个人进来看电视, 他们打开了它. 其它人可以进房间然后看电视. 当最后一个人离开房间, 他们关掉电视,因为它不再被用, 如果当其它人还在看它的时候一个人关掉电视, 这将有来自还在电视的人的骚动!
+
+当我们想要在堆上给我们的程序多个部分的数据分配内存而且我们在编译时不能决定哪部分将最后使用数据时, 我们使用Rc<T>类型. 如果我们知道哪部分将最后结束, 我们可以只让那部分作为数据的拥有者, 在编译时被强制的常规的引用规则将运作.
+
+注意Rc<T>只可以用于单线程场景. 当我们在16章讨论并发的时候, 我们将覆盖在多线程程序里如何引用计数.
+
+*** 使用Rc<T>分离数据
+让我们回到在代码15-5里我们的列表构造器例子, 回顾我们使用 Box<T>定义它. 这回,我们将创建两个都共享第三个列表所有权的列表. 概念上, 这看起来如图 15-3:
+
+[[https://doc.rust-lang.org/book/img/trpl15-03.svg]]
+图 15-3: 两个列表, b和c, 共享拥有第三个列表a的所有权
+
+我们将创建一个列表a包含5到10, 然后我们将创建更多的列表: b 以3开始,和 c以4开始, b和c将继续在第一个包含5到10的a列表后面. 换句话说, 两个列表都共享第一个包含5到10的列表.
+
+使用我们使用Box<T> 的List的定义尝试实现这种场景将不能运作, 如代码 15-17:
+
+文件名: src/main.rs
+#+begin_src rust
+enum List {
+    Cons(i32, Box<List>),
+    Nil,
+}
+
+use crate::List::{Cons, Nil};
+
+fn main() {
+    let a = Cons(5, Box::new(Cons(10, Box::new(Nil))));
+    let b = Cons(3, Box::new(a));
+    let c = Cons(4, Box::new(a));
+}
+#+end_src
+代码 15-17: 展示我们不被允许有两个使用Box<T>尝试共享第一个列表的所有权的两个列表
+
+当我们编译这段代码, 我们得到这个错误:
+#+begin_src shell
+$ cargo run
+   Compiling cons-list v0.1.0 (file:///projects/cons-list)
+error[E0382]: use of moved value: `a`
+  --> src/main.rs:11:30
+   |
+9  |     let a = Cons(5, Box::new(Cons(10, Box::new(Nil))));
+   |         - move occurs because `a` has type `List`, which does not implement the `Copy` trait
+10 |     let b = Cons(3, Box::new(a));
+   |                              - value moved here
+11 |     let c = Cons(4, Box::new(a));
+   |                              ^ value used here after move
+
+For more information about this error, try `rustc --explain E0382`.
+error: could not compile `cons-list` due to previous error
+#+end_src
+Cons变量拥有了它们保存的数据, 所以当我们创建b列表时, a被移动到了b然后b拥有a. 然后当我们创建c时,我们两次尝试使用a, 我们不被允许因为a已经被移除了.
+
+我们可以修改Cons的定义来保存引用, 但是之后我们必须指定生命周期参数. 通过指定生命周期参数, 我们可以指定在列表里的每个元素将活到和整个列表一样久. 借用检查器不让我们编译 let a = Cons(10,&Nil); 比如, 因为临时的Nil值会被在a可以获取一个到它的引用前销毁.
+
+相对的, 我们在使用Box<T>的地方修改我们的List的定义来使用Rc<T>, 如代码 15-18. 每个Cons变量现在将保存一个值和一个Tc<T>指针指向一个列表. 当我们创建一个b代替获取a的所有权时, 我们将克隆a正在保存的Rc<List>, 从而从1到2增加了引用数量而且让a和b共享在Rc<List>里的数据的所有权. 当创建c时我们也克隆a, 从2到3增加引用计数,每次我们调用Rc::clone, 在Rc<List>里的数据的引用总和将增加, 而且数据将不被清理,除非只有零个引用引用它.
+
+文件名: src/main.rs
+#+begin_src rust
+enum List {
+    Cons(i32, Rc<List>),
+    Nil,
+}
+
+use crate::List::{Cons, Nil};
+use std::rc::Rc;
+
+fn main() {
+    let a = Rc::new(Cons(5, Rc::new(Cons(10, Rc::new(Nil)))));
+    let b = Cons(3, Rc::clone(&a));
+    let c = Cons(4, Rc::clone(&a));
+}
+#+end_src
+代码 15-18: 一个使用Tc<T>的List的定义
+
+我们需要添加一个use语句来引入Rc<T>到作用域, 因为它没有被预引入. 在main里, 我们创建保存5到10的列表然后保存到一个新的 Rc<List>到a. 然后当我们创建b和c,我们调用Rc::clone函数然后作为一个参数传递一个Rc<List>的引用到a.
+
+我们将调用a.cloone()而不是 Rc::clone(&a), 在这种情况下rust转化将使用Rc::clone. Rc::clone的实现不像大多数类型的clone做的实现一样在所有的数据上深层复制. Rc::clone的调用只增加引用计数, 这不花费时间, 数据的深层复制可能花很多时间. 通过使用Rc::clone来引用计数, 我们可以可视化地区分克隆的深层复制种类和增加引用计数的克隆的种类. 当在代码里查找性能问题, 我们只需要考虑深层克隆和可以漠视Rc::clone的调用.
+
+*** 克隆一个Rc<T>增加引用计数
+让我们修改我们在代码15-18里的工作示例, 我们可以当我们创建和销毁在a里的Rc<List>的引用时看到引用计数改变.
+
+在代码 15-19里,我们将修改main, 让它有一个内部的作用域包围列表c; 然后我们可以看到当c越出作用域时引用计数如何改变.
+
+文件名: src/main.rs
+#+begin_src rust
+enum List {
+    Cons(i32, Rc<List>),
+    Nil,
+}
+
+use crate::List::{Cons, Nil};
+use std::rc::Rc;
+
+fn main() {
+    let a = Rc::new(Cons(5, Rc::new(Cons(10, Rc::new(Nil)))));
+    println!("count after creating a = {}", Rc::strong_count(&a));
+    let b = Cons(3, Rc::clone(&a));
+    println!("count after creating b = {}", Rc::strong_count(&a));
+    {
+        let c = Cons(4, Rc::clone(&a));
+        println!("count after creating c = {}", Rc::strong_count(&a));
+    }
+    println!("count after c goes out of scope = {}", Rc::strong_count(&a));
+}
+#+end_src
+代码 15-19: 输出引用计数
+
+在程序里引用计数改变的每个地方在每个点, 我们输出引用计数, 我们可以通过调用Rc::string_count函数得到, 这个函数被命名为 string_count而不是count因为 Rc<T>类型也有一个weak_count;我们将看到被使用在"阻止引用循环: 转化一个 Rc<T>到一个Weak<T>"章里的weak_count是什么.
+
+这段代码输出如下:
+#+begin_src shell
+$ cargo run
+   Compiling cons-list v0.1.0 (file:///projects/cons-list)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.45s
+     Running `target/debug/cons-list`
+count after creating a = 1
+count after creating b = 2
+count after creating c = 3
+count after c goes out of scope = 2
+#+end_src
+
+我们可以看到在a里的Rc<List>有一个为1的初始引用计数, 每次我们调用clone, 计数增加1, 然后c超出作用域, 计数减1, 我们不用像我们必须调用Rc::clone来增加引用计数一样去调用一个函数来减少引用计数: 当一个Rc<T>值超出作用域时Drop特性和实现自动地减少了引用计数.
+
+在这个例子里我们看到的是当b和c在main的结尾超出作用域, 然后计数变成0, 然后Rc<List>在那个点被完全的清理. 使用 Rc<T>允许一个简单的值有多个引用, 而且计数确保了值和任何所有者存在时仍然有效.
+
+通过不可变引用, Rc<T>允许你在你的程序的多个部分只读地共享数据. 如果 Rc<T>也允许你有多个的可变引用, 你可能违反在第4章讨论的一个借用规则: 一个地方的多个可修改借用可能导致数据竞争和不一致. 但是启动可修改的数据将很有用! 在下一章, 我们将讨论内部的修改模式和 RefCell<T>类型你可以使用在和一个Rc<T>连接来和这个不可变限制工作.
+
+
+** RefCell<T>和内部的可变模式
+内部可变模式是一种rust里的设计模式允许你即使有不可变引用到那块数据时修改数据; 通常,这个操作被使用规则禁止. 可修改数据, 模式在一个数据结构里使用 unsafe代码来改变rust的给定的修改和借用的常用规则. 我们还没有覆盖不安全代码, 我们将在19章. 当我们可以确保借用规则在运行时被遵循时,我们可以使用使用内部可变模式的类型, 即使编译器不保证. 关联的unsafe代码被包裹在不安全API里, 而且外部类型仍然不可修改.
+
+让我们通过查看跟随在内部可修改模式的RefCell<T>类型解释这个概念
+
+*** 使用 RefCell<T>在编译时强制执行借用规则
+不像 Rc<T>, RefCell<T>类型在它保存的数据上呈现为简单所有者. 所以, 什么让 RefCell<T>有别于像Box<T>一样的类型? 回顾在第4章你学习过的借用规则:
++ 在任何给定的时间, 你可以拥有(但不是两者)一个可写引用或者任意数量的不可写引用.
++ 引用必须一直有效
+
+有了引用的 Box<T>, 借用规则的不变量在编译时被强制了. 有了 RefCell<T>, 这些不变量在运行时被强制. 有了引用, 如果你破坏这些规则, 你将得到一个编译错误. 有了 RefCell<T>, 如果你破坏这些规则, 你的程序将恐慌然后退出.
+
+在编译时检查借用规则的优点是错误将在开发过程很快被捕捉, 而且对运行时性能没有影响因为所有的分析都提前完成了. 出于这些原因, 在编译时查检借用规则是在多数情况下最好的选择, 这也是它是rust默认行为的原因.
+
+对比在运行时检查借用规则的优点是确定的内存安全场景被允许, 然而它们被编译时检查禁止. 静态分析, 像rust编译器, 天生地很保守. 通过分析代码一些代码的属性可能无法检测到: 最著名的例子是停机问题, 这超出了本忆的范围但可作为一个有趣的例子来搜索.
+
+因为一些分析是不可能的, 如果rust编译器不能确保代码使用所有权规则编译, 通过这种方式, 它的保守, 它可能会阻止一个正确的程序; 如果rust接受一个错误的程序, 用户可能不能相信rust来保存rust所做的. 然而, 如果rust拒绝一个正确的程序, 程序员将变会不方便, 但是没有什么灾难可以发生.  当你确保你的代码遵循借用规则但是编译器不能明白和保证它时, RefCell<T>类型很有用.
+
+和 Rc<T>相似, RefCell<T> 只可以在单线程场景使用而且如果你试着在多线程上下文里使用你将得到一个编译时错误. 我们将在16章讨论如果得到在一个多线程程序里的RefCell<T>的功能.
+
+这是选择Box<T>,Rc<T>,或者RefCell<T>原因的回顾:
+
++ Rc<t> 对于相同数据启用多个所有者; Box<T>和RefCell<T>有单个所有者
++ Box<T> 允许不可修改的或者可修改的编译时借用检查; Rc<T>只允许编译时不可修改的借用检查; RefCell<T>允许不可修改或者可修改的运行时借用检查
++ 因为 RefCell<T>允许运行时可修改借用检查, 即使RefCell<T>是不可修改的你也可以修改RefCell<t>里的值
+  修改在一个不可修改的值里的值是内部修改模式. 让我们看一个在内部修改有用的情况和解释如何让它成为可能.
+
+*** 内部修改: 一个不可变值的可修改借用
+一系列的借用规则是当你有一个不可修改的值, 你不能以可修改的方式借用, 比如,这段代码编译不过:
+#+begin_src rust
+fn main() {
+    let x = 5;
+    let y = &mut x;
+}
+#+end_src
+如果你尝试编译这段代码, 你会得到下面的错误:
+
+#+begin_src shell
+$ cargo run
+   Compiling borrowing v0.1.0 (file:///projects/borrowing)
+error[E0596]: cannot borrow `x` as mutable, as it is not declared as mutable
+ --> src/main.rs:3:13
+  |
+2 |     let x = 5;
+  |         - help: consider changing this to be mutable: `mut x`
+3 |     let y = &mut x;
+  |             ^^^^^^ cannot borrow as mutable
+
+For more information about this error, try `rustc --explain E0596`.
+error: could not compile `borrowing` due to previous error
+#+end_src
+
+然而, 有在自己的方法里给一个值可修改在其它代码里出现不可修改自己它可能会有用的情况. 值的方法里的外部代码将不可以修改值. 使用 RefCell<T>是一种得到内部可修改的能力的方式. 但是 RefCell<T>不能得到完整的借用规则: 编译器里的借用检查允许内部的可修改, 而且相对的借用规则在运行时检查. 如果你违反规则, 你将得到恐慌而不是编译错误.
+
+让我们通过一个特定的例子运作, 我们可以使用RefCell<T>来修改一个不可修改值然后看为什么它有用.

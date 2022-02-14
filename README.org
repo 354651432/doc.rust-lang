@@ -4,4 +4,5 @@
 ** 术语对照
 + panic :: 恐慌
 + generics :: 泛型
++ cons list :: 列表构造器
 
