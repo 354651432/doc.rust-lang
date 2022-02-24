@@ -1,0 +1,591 @@
+* 无畏并发
+安全有效地处理并发是另一个rust的主要目标. 并发程序, 是一个程序独立处理的不同部分, 和并行程序是在相同时间处理的不同部分, 正在增加作为它们的多处理器的计算机优势的重要性. 历史性的, 在这些情景下的编程变得困难和容易出错: rust希望改变现状.
+
+最初, rust团队认为确保内存安全和阻止并发问题是解决困难方法的两个方面挑战. 随意时间推移, 团队发现所有权和类型系统是帮助管理内存安全和并发问题的工具集! 使用所有权和类型查检, 很多并发错误是rust里的编译时错误. 因此, 相比于让你花很多时间尝试产生额外的运行时并发问题发生的环境, 不正确的代码将拒绝编译和阻止一个错误解释问题. 结果是, 当你在上面工作的时候你可以修正你的代码而不是在它被放到生产环境以后. 我们把rust的这 方面命名为无畏并发, 无畏并发允许你编写轻微的bug和不需要产生新bug的重构的代码.
+
+#+begin_quote
+注意: 为了简单起见, 我们引用许多并发问题而不是更精确的说并发或者并行. 如果这本书是关于并发或者并行, 我们将更加具体. 对于这章, 当我们使用并发的时候精神上代替并发.
+#+end_quote
+
+许多语言是教条式的关于它们提供的处理并发问题的解决方法. 比如, Erlang有优雅的方法处理消息传递并发, 但只有朦胧的方式在多线程里共享状态. 只提供解决方案的可能的子集对于高级别的语言是可以理解的策略, 因为高级另的语言保证从给一些控制到获取抽象的优势. 然而, 低级别的语言期望提供在给定条件下最好的性能的解决方案和只有超过硬件很少的抽象. 因此, rust在无论什么方式适合于你的解决和需求为现代的问题提供很多工具.
+
+我们在这章里将覆盖的两个主题:
++ 在同一时间如何创建线程运行多线程代码
++ 消息传递并发, 线程间传递消息的管道
++ 共享状态并发,多线程可以访问相同的数据片段
++ Sync 和 Send特性, 扩展rust对于使用定义类型的并发保证也是标准库提供的类型
+
+** 使用线程同时运行代码
+在多数现代的操作系统里, 一个被执行的程序代码是在一个进程上运行, 操作系统在同一时间管理多进程. 在你的程序内部, 你也可以有独立的部分同时运行. 运行这些独立部分的功能被叫作线程.
+
+把在你程序里的计算拆分成多个线程可以提高性能因为程序在相同时间运行多任务, 但它也增加了复杂度. 因为线程可以同时运行, 没有固有的保证在不同的线程里的代码的部分将运行的顺序. 这可能导致问题,比如:
++ 竞争条件, 线程以一个不一至的顺序访问数据或者资源
++ 死锁, 两个线程相互等待对方完成使用另一个线程拥有的资源, 阻止两个线程继续运行
++ 特定条件下发生的和难以处理和修正的问题
+
+  rust尝试使用线程带来的负面影响, 但是在一个多线程环境下的程序依然小心的想法和获取一块单线程程序运行时不同的代码结构.
+
+  编程语言用一些不同的方式实现线程. 许多操作系统提供创建新线程的API. 一个语言调用操作系统API创建线程的模型有时候叫 1:1, 意味着一个操作系统线程对应一个编程语言线程.
+
+  许多编程语言提供自己另定的线程实现. 编程语言提供的线程被叫作绿色线程, 而且使用这些绿色线程的语言将在操作系统线程的不同编号的上下文里执行它们. 出于这个原因, 绿色线程模型被叫作 M:N 模型: 这里M 个绿色线程对应N个操作系统线程, 这里的M和N不必有相同的数字.
+
+  每个模型有它自己的优势和权衡, 而且对rust最重要的权衡是运行时供给. 运行时是一个困惑的术语而且在不同上下文可以有不同的意义.
+
+  在这个上下文里, 通过运行时我们意味着在每个二进制里被语言包括的代码. 这些代码可以大或者小的依赖于语言, 但每个非汇编语言将有一部分的运行时代码. 出于那个原因, 通俗地说当人们说语言没有运行时, 他们常常意味着"很小的运行时"更小的运行时拥有更少的功能但是在有更小的二进制的优势, 这让在更多的场景里它容易组合语言到其它运行, 虽然许多语言增加运行时尺寸来增加更多的功能是可以的, rust需要更接近没有运行时然后不可以妥协调用C来维持性能.
+
+  绿色线程 M:N 模型需要更大的语言运行时来管理线程. 如此, rust标准库只提供一个1:1线程的实现. 因为rust是如此低级的语言, 比如, 如果你想要如更多线程运行的控制方面和上下文切换更小的开销也有M:N线程的实现的crates.
+
+  现在我们已经定义了rust里的线程, 让我们解释如何使用标准库提供的线程关联API.
+
+*** 使用spawn 创建一个新的线程
+创建一个新线程, 我们调用 thread::spawn 函数然后传递一个包含我们想要在新线程里运行的代码的必包(我们在13章讨论必包). 在16-1里的例子输出一些g炸主线程的文本和来自新线程的文本.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::thread;
+use std::time::Duration;
+
+fn main() {
+    thread::spawn(|| {
+        for i in 1..10 {
+            println!("hi number {} from the spawned thread!", i);
+            thread::sleep(Duration::from_millis(1));
+        }
+    });
+
+    for i in 1..5 {
+        println!("hi number {} from the main thread!", i);
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+#+end_src
+代码 16-1: 当主线程输出其它一些东西时创建一个新线程输出一些东西
+
+注意在这个函数里, 当主线程结束的时候新线程也将停止, 不管它运行没运行结束. 从这个程序来的输出可能每次有点不同, 但是它看起来类似于下面的:
+
+#+begin_src
+hi number 1 from the main thread!
+hi number 1 from the spawned thread!
+hi number 2 from the main thread!
+hi number 2 from the spawned thread!
+hi number 3 from the main thread!
+hi number 3 from the spawned thread!
+hi number 4 from the main thread!
+hi number 4 from the spawned thread!
+hi number 5 from the spawned thread!
+#+end_src
+
+thread::sleep的调用强制一个线程在一个很短的间隔里停止它的执行, 允许一个不同的线程运行. 线程可能转过来, 但是不能保证: 它依靠于你的操作系统如何调度这些线程. 这次的运行里, 主线程先输出, 尽管从创建线程的输出语句首先出现在代码里. 然后即使我们告诉创建的线程输出1从1到9, 在主线程结束前它只到5.
+
+如果你运行这段代码只看见从主线程来的输出, 或者没看见任何重叠, 试着增加范围里的数字来为操作系统在线程间切换创建更多的机会.
+
+*** 使用join操作等待所有线程完成
+在16-1里的代码大多数时间由于主线程的结束不只过早地停止了创建的线程, 也不能保证创建的线程也得到运行. 原因是没有对哪个线程运行顺序的保证!
+
+我们可以修正这个没有得到运行,或者没有完全运行的线程的问题,, 保存 thread::spawn返回值到一个变量里. thread::spawn 返回类型是 JoinHandle. 一个JoinHandle 是一个当我们在上面调用jojn方法时的被允许的值, 将等待它的线程结束. 代码16-2 展示了如何使用我们在代码16-2里创建的线程的JoinHandle和调用join确保在main退出前创建的线程结束:
+
+文件名: src/main.rs
+#+begin_src rust
+use std::thread;
+use std::time::Duration;
+
+fn main() {
+    let handle = thread::spawn(|| {
+        for i in 1..10 {
+            println!("hi number {} from the spawned thread!", i);
+            thread::sleep(Duration::from_millis(1));
+        }
+    });
+
+    for i in 1..5 {
+        println!("hi number {} from the main thread!", i);
+        thread::sleep(Duration::from_millis(1));
+    }
+
+    handle.join().unwrap();
+}
+#+end_src
+代码 16-2: 保存一个来自 thread::spawn的JoinHandle以保证线程运行结束
+
+在线程上调用 join阻止当前运行的线程至到被句柄的表示的线程终止. 阻止线程意味着线程被阻止运作或者退出. 因为我们在主线程for循环后面放置join的调用, 运行代码 16-2 将产生和这个相似的结果:
+#+begin_src
+hi number 1 from the main thread!
+hi number 2 from the main thread!
+hi number 1 from the spawned thread!
+hi number 3 from the main thread!
+hi number 2 from the spawned thread!
+hi number 4 from the main thread!
+hi number 3 from the spawned thread!
+hi number 4 from the spawned thread!
+hi number 5 from the spawned thread!
+hi number 6 from the spawned thread!
+hi number 7 from the spawned thread!
+hi number 8 from the spawned thread!
+hi number 9 from the spawned thread!
+#+end_src
+
+两个线程继续交替, 但是主线程等待, 因为handle.join()的调用和至到创建的线程结束主线程不会结束.
+
+但是当我们在main里for循环前面插入 handler.join()让我们看看发生了什么, 像这样:
+
+文件名: src/main.rs
+#+begin_src rust
+use std::thread;
+use std::time::Duration;
+
+fn main() {
+    let handle = thread::spawn(|| {
+        for i in 1..10 {
+            println!("hi number {} from the spawned thread!", i);
+            thread::sleep(Duration::from_millis(1));
+        }
+    });
+
+    handle.join().unwrap();
+
+    for i in 1..5 {
+        println!("hi number {} from the main thread!", i);
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+#+end_src
+
+主线程等待创建的线程的结束然后运行for循环, 所以输出不再交替, 如下:
+#+begin_src
+hi number 1 from the spawned thread!
+hi number 2 from the spawned thread!
+hi number 3 from the spawned thread!
+hi number 4 from the spawned thread!
+hi number 5 from the spawned thread!
+hi number 6 from the spawned thread!
+hi number 7 from the spawned thread!
+hi number 8 from the spawned thread!
+hi number 9 from the spawned thread!
+hi number 1 from the main thread!
+hi number 2 from the main thread!
+hi number 3 from the main thread!
+hi number 4 from the main thread!
+#+end_src
+
+小细节, 比如 join被调用, 可能影响线的线程在相同时间是否运行.
+
+*** 使用线程的move必包
+move必包经常被使用在 thread::spawn上因为它允许你在另一个线程里使用来自一个线程的数据.
+
+在13章, 我们提到我们可以在一个必包的参数列表前面使用move关键字强制必包获取在环境里它使用的值的所有权. 当创建一个新线程的时候为了转化来自一个线程到另一个线程的值的所有权这个技术特别有用.
+
+注意在代码16-1里我们传递到 thread::spawn里的必包不接收参数: 我们不在创建的线程代码里使用任何来自主线程的数据. 在创建的线程里使用来自主线程的数据, 创建的线程必包必须获取它需要的值. 代码16-3 展示在主线程里创建一个向量然后在创建的线程里使用它的尝试. 然而, 这还不能运作, 就像你在一个时刻看到的.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::thread;
+
+fn main() {
+    let v = vec![1, 2, 3];
+
+    let handle = thread::spawn(|| {
+        println!("Here's a vector: {:?}", v);
+    });
+
+    handle.join().unwrap();
+}
+#+end_src
+代码 16-3: 在另一个线程里尝试使用主线程创建的向量
+
+必包使用v, 所以它将获取v然后让它灰飞烟灭必包环境的一部分. 因为thread::spawn 在一个新线程里运行这个必包, 我们可以在那个新线程的内部访问v, 但是当我们编译这个例子, 我们得到如下错误:
+#+begin_src shell
+$ cargo run
+   Compiling threads v0.1.0 (file:///projects/threads)
+error[E0373]: closure may outlive the current function, but it borrows `v`, which is owned by the current function
+ --> src/main.rs:6:32
+  |
+6 |     let handle = thread::spawn(|| {
+  |                                ^^ may outlive borrowed value `v`
+7 |         println!("Here's a vector: {:?}", v);
+  |                                           - `v` is borrowed here
+  |
+note: function requires argument type to outlive `'static`
+ --> src/main.rs:6:18
+  |
+6 |       let handle = thread::spawn(|| {
+  |  __________________^
+7 | |         println!("Here's a vector: {:?}", v);
+8 | |     });
+  | |______^
+help: to force the closure to take ownership of `v` (and any other referenced variables), use the `move` keyword
+  |
+6 |     let handle = thread::spawn(move || {
+  |                                ^^^^^^^
+
+For more information about this error, try `rustc --explain E0373`.
+error: could not compile `threads` due to previous error
+#+end_src
+
+rust推测如何获取v, 然后因为 println! 只需要一个v的引用, 必包尝试借用v, 然而, 这里有一个问题: rust不能区分创建的线程将运行多久, 所以它不知道v的引用是否一直有效.
+
+代码 16-4 提供一个更大的可能获取可能失效的v的引用的场景:
+
+文件名: src/main.rs
+#+begin_src rust
+use std::thread;
+
+fn main() {
+    let v = vec![1, 2, 3];
+
+    let handle = thread::spawn(|| {
+        println!("Here's a vector: {:?}", v);
+    });
+
+    drop(v); // oh no!
+
+    handle.join().unwrap();
+}
+#+end_src
+代码 16-4: 一个有尝试获取从销毁v的主线程的v的引用的必包的线程
+
+如果我们被允许运行这段代码, 可能创建的线程将被放到后台再也不运行.  创建的线程在内部有一个v的引用, 但是主线程立即销毁v, 使用我们在15章讨论的drop函数. 然后, 当我们创建的线程开始执行, v不再有效, 所以到它的一个引用也是非法的.
+
+修正在代码16-3里的编译错误, 我们可以使用错误消息的建议:
+#+begin_src
+help: to force the closure to take ownership of `v` (and any other referenced variables), use the `move` keyword
+  |
+6 |     let handle = thread::spawn(move || {
+  |                                ^^^^^^^
+#+end_src
+
+在必包前添加move关键字, 我们强制必包获取它正在使用的值的所有权而不是允许rust推测它将借用值. 代码 16-3的代码如代码16-5将编译和我们认为的一样运行:
+
+文件名: src/main.rs
+#+begin_src rust
+use std::thread;
+
+fn main() {
+    let v = vec![1, 2, 3];
+
+    let handle = thread::spawn(move || {
+        println!("Here's a vector: {:?}", v);
+    });
+
+    handle.join().unwrap();
+}
+#+end_src
+代码 16-5: 使用move关键字强制一个必包获取它使用的值的所有权
+
+如果我们使用一个move必包, 在16-4里的代码产生了什么当主线程调用drop? move可以修正那种场景吗? 不幸地, 不; 我们将得到一个不同的错误因为代码16-4试着去做的是出于另一个原因不被允许. 如果我们给必包添加move, 我们将移动v到必包的环境, 然后我们将不再在主线程在它上面调用drop. 而是我们将得到这个编译错误:
+
+#+begin_src shell
+$ cargo run
+   Compiling threads v0.1.0 (file:///projects/threads)
+error[E0382]: use of moved value: `v`
+  --> src/main.rs:10:10
+   |
+4  |     let v = vec![1, 2, 3];
+   |         - move occurs because `v` has type `Vec<i32>`, which does not implement the `Copy` trait
+5  | 
+6  |     let handle = thread::spawn(move || {
+   |                                ------- value moved into closure here
+7  |         println!("Here's a vector: {:?}", v);
+   |                                           - variable moved due to use in closure
+...
+10 |     drop(v); // oh no!
+   |          ^ value used here after move
+
+For more information about this error, try `rustc --explain E0382`.
+error: could not compile `threads` due to previous error
+#+end_src
+rust的所有权规则再次拯救了我们! 我们从16-3里的代码得到一个错误 因为rust变得保守然后只从线程里借用v, 这意味着主线程对创建线程上的引用理论上的无效. 通过告诉rust移动v的所有权到创建的线程. 我们保证rust主线程再也不使用v. 如果我们用相同的方式修改代码16-4, 然后当我们在主线程试图使用v我们将违反借用规则. move关键字重定了rust的借用的保守的默认行为: 它不让我们违反借用规则.
+
+通过对线程和线程API的基本理解, 让我们看到我们可以通过线程做什么.
+
+** 使用消息传递在线程间转换数据
+一个确保线程安全的增加的流程趋势是消息传递, 线程或者被包含数据的其它消息发相的联系演员. 这是一个来自go语言文档的口号上想法"不要联系别分离的内存, 而是,通过联系共享内存"
+
+rust尝试发并消息发送的一个主要工作是管道, 一个rust标准库提供实现的编程语言概念. 你可以想象一个在线程里的管道为像一个水的管道, 比如流动的小溪. 如果你放置一些像木块一样的东西或者船在一个水流上, 它将运输到水路的下游的尽头.
+
+程序里的管道有两个方面: 一个发送者一个接收者. 发送部分是你放置鸭子到河里的上游位置, 接收部分是鸭子最终流向的下游终点. 你代码的一部分在有你想要发送的数据的发送者上调用方法, 然后另一部分为要接收的消息检查接收到消息. 如果不管发送者还是接收者被销毁一个管道被告知关闭.
+
+这里, 我们将在一个单线程程序上工作来生成值然后发送它们到一个管道, 然后另一个线程将接收值然后输出它们. 我们将在线程间使用一个管道阐明的功能来发送简单的值. 一旦你熟悉了这个技术, 你可以使用管道实现一个聊天系统或者许多线程在一个场景的很多部分表现和发送一个汇总结果的线程的部分的系统.
+
+首先, 在代码16-6里, 我们创建一个管道, 但是不用它做任何事, 注意这将不能编译,因为rust不能区分我们想发送给管道的值是什么类型.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::sync::mpsc;
+
+fn main() {
+    let (tx, rx) = mpsc::channel();
+}
+#+end_src
+代码 16-6: 创建一个管道然后赋值给 tx和rx两个方面
+
+我们使用mpsc:channel函数创建一个新的管道; mpsc提供多处理, 单消耗的支持. 简单来说, rust标准库实现管道的方式意味着一个管道可以有多个产生值的发送终端但只有一个接收值的消耗这些值的接收终端, 想象多条小溪流到一起变成一条大河: 发送到任何河里的任何东西在最终终止在一条河里. 现在我们将以单个产生者开始, 但是当我们这个例子运作以后我们将添加多个生产者.
+
+mpsc::channel函数返回一个元组, 它的第一个元素是发送终端, 第二个元素是接收终端. tx和rx的缩写是传统意味上在很多字段里使用为 发送者和接收者的方便, 所以我们如此命名我们的变量来表明它们. 我们使用带有析构元素的一组let语句; 我们将在第18章讨论在let语句里的模式的使用和析构. 使用这种方式的let语句对于解压mpsc::channel返回的元素的部分是一种方便的表达.
+
+让我们移动发送终端到一个创建的线程里然后让它发送一个字符串所以创建的线程和主线程联系在一起, 如代码 16-7. 这就像放一个鸭子到河流里或者发送一个来自一个线程的聊天消息到另一个线程.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::sync::mpsc;
+use std::thread;
+
+fn main() {
+    let (tx, rx) = mpsc::channel();
+
+    thread::spawn(move || {
+        let val = String::from("hi");
+        tx.send(val).unwrap();
+    });
+}
+#+end_src
+代码 16-7: 移动 tx到一个创建的线程然后发送 "hi"
+
+我们再次使用 thread::spawn 创建一个新线程然后使用 move移动 tx到必包里以至于创建的线程拥有tx. 创建的线程需要拥有管道的发送终端来可以通过管理发送消息.
+
+发送终端有一个获取我们想要发送的值的send方法. send方法返回一个 Result<T,E> 类型, 所以如果接收终端已经被删除然后没发方发送一个值, 发送操作将返回一个错误. 在这个例子里, 我们调用unwrap来恐慌一个错误的情况. 但是在一个真实的程序里, 我们将正确地处理它: 回到第9章回顾错恰当的误处理的策略.
+
+在代码 16-8里, 我们将得到来自主线程里的管道的接收终端的数据. 这就像在河的末尾收到来自水里的鸭子或者像得到一个聊天消息.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::sync::mpsc;
+use std::thread;
+
+fn main() {
+    let (tx, rx) = mpsc::channel();
+
+    thread::spawn(move || {
+        let val = String::from("hi");
+        tx.send(val).unwrap();
+    });
+
+    let received = rx.recv().unwrap();
+    println!("Got: {}", received);
+}
+#+end_src
+代码 16-8: 在主线程里接收值hi 然后输出它
+
+管道的接收终端有两个有用的方法: resv 和try_recv. 我们使用 recv, receive的科室, 这将阻止主线程的执行然后等待至到一个值被送到管道里面. 一旦一个值被发送, recv将返回它在一个 Result<T,E>里. 管道的发送终端关闭, recv 将返回一个错误来标志再也没有值来了.
+
+try_recv方法不阻塞, 但是相对于立即返回一个 Result<T,E>: 有效时一个保存一个消息Ok值, 如果这次没有任何消息返回一个Err值. 当等待消息的时候如果这个线程有其它的工作去做使用 try_recv很有用: 我们可以写一个循环每次经常地调用 try_recv, 如果有效处理一个消息, 否则做其它事情一会儿至到再次检查.
+
+简单起见这个例子里我们使用 recv; 除了等消息我们没有任何其它的工作给主线程来做, 所以阻塞主线程是适合的.
+
+当我们运行 16-8里的代码, 我们将看到来自主线程的值被输出:
+#+begin_src
+Got: hi
+#+end_src
+完美!
+
+*** 管道和所有权转换
+所有权规则在消息发送里充当了一个重要的角色因为它们帮助你写安全, 并发的代码. 阻止并发程序里的错误是思考你的rust程序的所有权的优点. 让我们做一个实验来展示管道和所有权如何工作在一起来阻止问题; 我们尝试在创建的线程里我们把它发送到管理以后使用一个val值. 尝试编译在16-9 里的代码来看为什么这段代码不被允许;
+
+文件名: src/main.rs
+#+begin_src rust
+use std::sync::mpsc;
+use std::thread;
+
+fn main() {
+    let (tx, rx) = mpsc::channel();
+
+    thread::spawn(move || {
+        let val = String::from("hi");
+        tx.send(val).unwrap();
+        println!("val is {}", val);
+    });
+
+    let received = rx.recv().unwrap();
+    println!("Got: {}", received);
+}
+#+end_src
+代码 16-9: 在我们把它发送到管道以后尝试使用val
+
+这里, 我们通过tx.send把它发送到管道以后我们尝试输出val. 允许这里将会是一个错误的想法: 一旦值被送到另一个线程, 在我们尝试再次使用值之前那个线程可以修改或者删除它. 潜在地, 另一个线程里的修改可能导致因为不一致或者不存在的数据错误或者意外的结果. 然而, 如果我们尝试编译在16-9里的代码rust给我们一个错误:
+
+#+begin_src shell
+$ cargo run
+   Compiling message-passing v0.1.0 (file:///projects/message-passing)
+error[E0382]: borrow of moved value: `val`
+  --> src/main.rs:10:31
+   |
+8  |         let val = String::from("hi");
+   |             --- move occurs because `val` has type `String`, which does not implement the `Copy` trait
+9  |         tx.send(val).unwrap();
+   |                 --- value moved here
+10 |         println!("val is {}", val);
+   |                               ^^^ value borrowed here after move
+
+For more information about this error, try `rustc --explain E0382`.
+error: could not compile `message-passing` due to previous error
+#+end_src
+
+我们的并发错误导致了一个编译时错误. send函数获取了它的参数的所有权, 然后值被移动了, 接收者获取了它的所有权, 这阻止在发送它以后我们实然的再次使用值; 所有权系统检查所有事情都正确.
+
+*** 发送多个值和查看接收等待
+在16-8的代码里编译然后运行, 但是它不能清晰地给我们展示两部分的线程将通过管道相互说话. 在代码16-10里我们创造了一些在代码16-8里并发运行的代码的修改: 创建的线程现在发送多条消息然后在每个消息间暂停一秒钟.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
+
+fn main() {
+    let (tx, rx) = mpsc::channel();
+
+    thread::spawn(move || {
+        let vals = vec![
+            String::from("hi"),
+            String::from("from"),
+            String::from("the"),
+            String::from("thread"),
+        ];
+
+        for val in vals {
+            tx.send(val).unwrap();
+            thread::sleep(Duration::from_secs(1));
+        }
+    });
+
+    for received in rx {
+        println!("Got: {}", received);
+    }
+}
+#+end_src
+代码 16-10: 发送多条消息然后在每条之间暂停
+
+这次, 创建的线程有一个我们想要发送到主线程的字符串的向量. 我们迭代它们, 独立地发送它们, 然后在每个之间带有一个值为1秒的Duration调用thread::sleep函数暂停.
+
+在主线程, 我们不再显式地调用recv函数, 我们把rx当作一个迭代器. 对于每个接收到的值, 我们输出它. 当管道被关闭, 迭代将结束.
+
+当运行在 16-10里的代码, 我应该看到如下输出, 每行间有一秒暂停:
+#+begin_src
+Got: hi
+Got: from
+Got: the
+Got: thread
+#+end_src
+
+因为在主线程里我们没有任何暂停或者延时的代码, 我们可以告诉主线程等待接收来自创建的线程的值.
+
+*** 克隆发送者创建多个产生者
+之前我们提到的mpsc是 muliple producer, single consumer的缩写. 让我们放 mpsc来使用扩展的在16-10里的代码来创建所有发送值到相同的接收者的多线程. 我们可以通过克隆管道的发送部分这样做, 如代码 16-11:
+
+文件名: src/main.rs
+#+begin_src rust
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
+
+fn main() {
+    // --snip--
+
+    let (tx, rx) = mpsc::channel();
+
+    let tx1 = tx.clone();
+    thread::spawn(move || {
+        let vals = vec![
+            String::from("hi"),
+            String::from("from"),
+            String::from("the"),
+            String::from("thread"),
+        ];
+
+        for val in vals {
+            tx1.send(val).unwrap();
+            thread::sleep(Duration::from_secs(1));
+        }
+    });
+
+    thread::spawn(move || {
+        let vals = vec![
+            String::from("more"),
+            String::from("messages"),
+            String::from("for"),
+            String::from("you"),
+        ];
+
+        for val in vals {
+            tx.send(val).unwrap();
+            thread::sleep(Duration::from_secs(1));
+        }
+    });
+
+    for received in rx {
+        println!("Got: {}", received);
+    }
+
+    // --snip--
+}
+#+end_src
+代码 16-11: 发送多个来自多个生产者的消息
+
+这次, 在我们创建第一个线程之前, 我们调用管道的发送终端的clone. 这将给我们一个新的发送句柄我们可以传递到第一个创建的线程里. 我们传递的管道原始发送终端到第一个线程里. 这给我们两个线程, 每个发送不同的消息给管道的接收终端.
+
+当你运行代码, 你的输出将起来像这样:
+
+#+begin_src
+Got: hi
+Got: more
+Got: from
+Got: messages
+Got: for
+Got: the
+Got: thread
+Got: you
+#+end_src
+
+你可能看到值是另外的顺序; 它依靠于你的系统. 这是让并发有趣和因难的原因. 如果你用  thread::sleep试验, 在不同的线程里给它多个值, 每个运行将更加不确定然后每次产生不同的输出.
+
+现在我们看到管道如何工作, 让我们看一个并发的不同的方法.
+
+** 分离状态并发
+消息传递是处理并发的很好的方式, 但这不是唯一的方式, 再次考虑一下go语言文档口号的这一部分:"不要通过共享内存联系"
+
+被共享内存的联系看起来像什么? 此外, 为什么消息传递将趋向于不使用它而做相反的事情?
+
+在某种方式, 在任何编程语言里的管道类似的有单一所有权, 因为一旦你传递一个值到管道里, 你应该不再使用那个值. 共享内存并发就像多个所有者: 多个线程可以在相同时间访问相同的内存.
+就像你在15章看到的, 智能指针让多个所有者成为可能, 多个所有者可能增加复杂性因为这些不同的所有者需要管理. rust的类型系统和强大的所有者规则有助手让这些管理正确. 比如, 让我们看一下互斥对象, 对于共享内存一个更加通用的基础并发.
+
+*** 使用互斥对象允许在一个时间来自一个线程的数据的访问
+mutex是一个 mutual exclusion的缩写, 进一步, 在任何给定的时间一个互斥对象只允许一个线程访问相同的数据. 访问在一个互斥对象里的数据, 线程首先必须标志它想要访问通过请求互斥对象的锁. 锁是一种跟踪谁当前有有数据的单独访问权限的互斥对象部分的数据结构. 因此, 互斥对象被描述为通过锁系统确保它保存的数据.
+
+互斥对象有一个难以使用的名声, 因为你必须记住两个规则:
++ 使用数据前你必须尝试请求锁
++ 当你使用完互斥对象守护的数据, 你必须去掉数据的锁让其它线程可以请求到锁
+
+  对锁的对一个真实世界里的比喻, 想象只有一部电话, 在一个会议里的小组讨论. 在一个小组成员可以说话之前, 他们必须要求或者标志他们想要使用电话. 当他们得到电话, 他们可以说和他们想要的一样长的时间然后把电话递给下一个要求说话的小组成员. 当他们用完它以后如果一个小组成员忘记递出电话, 其它人也不可以说话了. 如果共享电话的管理出错了, 小组成员将不能按照计划的运作!
+
+  互斥对象的管理可能很棘手于让它正确, 这也是为什么许多人热衷于管道的原因. 然而, 考虑rust的类型系统和所有权规则, 你不会得到锁然后解锁错误.
+
+  
+*** Mutex<T>的API
+作为如何使用一个互斥对象的例子, 让我们在一个单线程环境使用互斥对象开始, 如代码 16-22:
+
+文件名: src/main.rs
+#+begin_src rust
+use std::sync::Mutex;
+
+fn main() {
+    let m = Mutex::new(5);
+
+    {
+        let mut num = m.lock().unwrap();
+        *num = 6;
+    }
+
+    println!("m = {:?}", m);
+}
+#+end_src
+代码 16-22: 为简单起见在一个单线程环境解释 Mutex<T>的API
+
+如很多类型一样, 我们使用关联的new函数创建一个 Mutex<T>. 为了访问在互斥对象里的数据, 我们使用lock方法来请求锁. 这个调用将阻塞当前线程所以至到我们得到锁它不能做任何事情.
+
+如果其它线程持有锁对lock的调用将失败. 那种情况下, 没有一个将可以得到锁, 所以如果在那种情况下我们选择unwrap然后让这个线程恐慌.
+
+在我们请求到锁以后,是 我们可以在这种情况下处理返回值,命名为num, 作为一个到数据内部的可写引用. 类型系统确保了使用在 使用m:Mutex<i32>值之前我们请求到一个锁不是一个i32, 所以我们必须讲求锁来使用i32值. 我们可能忘记; 否则类型系统不会让我们访问内部的 i32.
+
+和你希望的一样, Mutex<T>是一个智能指针. 更准确地, lock的调用返回一个叫MutexGuard的智能指针, 包裹一个我们通过unwrap调用处理的LockResult. MutexGuard智能指针实现Deref来指向我们的内部数据; 这个智能指针也有一个Drop的实现, 当MutexGuard超出作用域时自动释放锁, 这发生在代码16-12里的内部作用域的结尾, 我们不承当忘记释放锁和阻塞互斥对象被其它线程使用的风险, 因为锁释放自动发生.
+
+删除完锁以后, 我们可以输出互斥对象值然后看到我们可以修改内部的 i32为6.
+

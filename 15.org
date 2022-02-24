@@ -791,3 +791,777 @@ error: could not compile `borrowing` due to previous error
 然而, 有在自己的方法里给一个值可修改在其它代码里出现不可修改自己它可能会有用的情况. 值的方法里的外部代码将不可以修改值. 使用 RefCell<T>是一种得到内部可修改的能力的方式. 但是 RefCell<T>不能得到完整的借用规则: 编译器里的借用检查允许内部的可修改, 而且相对的借用规则在运行时检查. 如果你违反规则, 你将得到恐慌而不是编译错误.
 
 让我们通过一个特定的例子运作, 我们可以使用RefCell<T>来修改一个不可修改值然后看为什么它有用.
+
+*** 可修改优先级的使用场景: 模拟对象
+AB测试对于在很多其它类型期间测试是一个通用的编程概念. 模拟对象指定了AB测试的类型, 记录一次测试中发生了什么氢你可以假定正确的行为在正确的地方.
+
+在有对象的其它语言的相同场景下Rust没有对象, 而且Rust也没有像其它语言做的那样内置于标准库的的模拟对象功能. 然而, 你可以确定地创建一个将作为模拟对象服务一些相同意图的结构体.
+
+这就是我们想要测试的设想: 我们将创建一个记录一个值与最大值然后根据最大值与当前值的接近程度发送消息的库. 这个库可以被用来跟踪大量他们允许创建的的api调用的配额, 比如.
+
+我们的库只提供跟踪一个值如何接近最大值和在什么时间什么消息应该发送的功能. 使用我们库的应用程序将被期望提供发送消息的机制: 应用应该在应用里放置消息, 发送邮件, 发送文本消息, 或者其它东西. 库不需要知道那些细节, 它所需要的是实现一个我们提供的叫Messenger的特性的东西. 代码 15-20展示库的代码:
+
+文件名: src/lib.rs
+#+begin_src rust
+pub trait Messenger {
+    fn send(&self, msg: &str);
+}
+
+pub struct LimitTracker<'a, T: Messenger> {
+    messenger: &'a T,
+    value: usize,
+    max: usize,
+}
+
+impl<'a, T> LimitTracker<'a, T>
+where
+    T: Messenger,
+{
+    pub fn new(messenger: &T, max: usize) -> LimitTracker<T> {
+        LimitTracker {
+            messenger,
+            value: 0,
+            max,
+        }
+    }
+
+    pub fn set_value(&mut self, value: usize) {
+        self.value = value;
+
+        let percentage_of_max = self.value as f64 / self.max as f64;
+
+        if percentage_of_max >= 1.0 {
+            self.messenger.send("Error: You are over your quota!");
+        } else if percentage_of_max >= 0.9 {
+            self.messenger
+                .send("Urgent warning: You've used up over 90% of your quota!");
+        } else if percentage_of_max >= 0.75 {
+            self.messenger
+                .send("Warning: You've used up over 75% of your quota!");
+        }
+    }
+}
+#+end_src
+代码 15-20: 一个跟踪如何接近一个值到最大值然后当值在指定等级的时候预警的库
+
+这段代码最重要的一个部分是Messenger特性有一个叫send的方法获取一个指向self和消息文本的不可变引用. 这个特性是我们的模拟对象需要去实现的接口所以模拟可以以相同的方式使用于一个真实的对象上. 另一个重要的部分是我们想要测试LimitTracker的set_value方法的行为. 我们可以修改我们为value参数传入的值. 但是set_value没有给我们返回任意信息来作断言. 我们想请如何我们创建一个LimitTracker和实现Messenger特性和max值的部分的一些东西, 当我们给value传递不同的数值, 消息发送者被告知发送合适的消息.
+
+我们需要一个模拟对象, 相对于当我们调用send的时候发送一个邮件或者文本消息, 我们只 跟踪它告诉我们需要发送的消息. 我们可以创建一个模拟对象的新实例, 创建一个LimitTracker使用模拟对象, 调用在LimitTracker上的set_value方法, 然后检查模拟对象有没有我们期望的消息. 代码 15-21 展示尝试实现一个模拟对象来做那些, 但是借用检查器不允许:
+
+文件名: src/lib.rs
+#+begin_src rust
+pub trait Messenger {
+    fn send(&self, msg: &str);
+}
+
+pub struct LimitTracker<'a, T: Messenger> {
+    messenger: &'a T,
+    value: usize,
+    max: usize,
+}
+
+impl<'a, T> LimitTracker<'a, T>
+where
+    T: Messenger,
+{
+    pub fn new(messenger: &T, max: usize) -> LimitTracker<T> {
+        LimitTracker {
+            messenger,
+            value: 0,
+            max,
+        }
+    }
+
+    pub fn set_value(&mut self, value: usize) {
+        self.value = value;
+
+        let percentage_of_max = self.value as f64 / self.max as f64;
+
+        if percentage_of_max >= 1.0 {
+            self.messenger.send("Error: You are over your quota!");
+        } else if percentage_of_max >= 0.9 {
+            self.messenger
+                .send("Urgent warning: You've used up over 90% of your quota!");
+        } else if percentage_of_max >= 0.75 {
+            self.messenger
+                .send("Warning: You've used up over 75% of your quota!");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct MockMessenger {
+        sent_messages: Vec<String>,
+    }
+
+    impl MockMessenger {
+        fn new() -> MockMessenger {
+            MockMessenger {
+                sent_messages: vec![],
+            }
+        }
+    }
+
+    impl Messenger for MockMessenger {
+        fn send(&self, message: &str) {
+            self.sent_messages.push(String::from(message));
+        }
+    }
+
+    #[test]
+    fn it_sends_an_over_75_percent_warning_message() {
+        let mock_messenger = MockMessenger::new();
+        let mut limit_tracker = LimitTracker::new(&mock_messenger, 100);
+
+        limit_tracker.set_value(80);
+
+        assert_eq!(mock_messenger.sent_messages.len(), 1);
+    }
+}
+#+end_src
+代码 15-21: 一次实现一个MockMessager的尝试,借用检查器不允许
+
+这个测试代码定义了一个MockMessenger结构体有一个String值的Vec字段sent_messages来跟踪被告知要发送的消息. 我们也定义一个关联的方法new来让创建一个新的以一个空的消息列表开始的MockMessenger值变得方便. 然后我们给MockMessenger实现Messenger特性所以我们可以给MockMessenger一个LimitTracker. 在send方法的定义里, 我们获取了作为参数传入的消息然后保存在sent_message的MockMessenger列表里.
+
+在测试里, 我们测试当LimitTracker被告知设置value值为大于最大值的百分之75东西时发生了什么, 这将以一个空的消息列表开始. 然后我们创建一个新的LimitTracker然后给它一个到新的MockMessenger的引用和100的max值. 我们可以用80的值在LimitTracker上调用set_value方法. 然后我们断言MockMessenger跟踪的消息的列表现在在它里面有一个消息.
+
+然而, 这个测试有一个问题, 如下:
+#+begin_src shell
+$ cargo test
+   Compiling limit-tracker v0.1.0 (file:///projects/limit-tracker)
+error[E0596]: cannot borrow `self.sent_messages` as mutable, as it is behind a `&` reference
+  --> src/lib.rs:58:13
+   |
+2  |     fn send(&self, msg: &str);
+   |             ----- help: consider changing that to be a mutable reference: `&mut self`
+...
+58 |             self.sent_messages.push(String::from(message));
+   |             ^^^^^^^^^^^^^^^^^^ `self` is a `&` reference, so the data it refers to cannot be borrowed as mutable
+
+For more information about this error, try `rustc --explain E0596`.
+error: could not compile `limit-tracker` due to previous error
+warning: build failed, waiting for other jobs to finish...
+error: build failed
+
+#+end_src
+
+我们不能修改MockMessenger去跟踪这个消息, 因为send方法获取一个self的只读引用. 我们也不能从使用&mut self代替的错误消息里得到建议, 因为send的签名不匹配Messenger特性定义的签名(随意的尝试使用看看你得到什么样的错误消息).
+
+这是一种内部修改可以帮助你的情况! 我们可以用一个RefCell<T>保存sent_message, 然后send方法将可以修改sent_messages 来保存我们看见的消息. 代码 15-22 展示那看起来像什么:
+
+文件名: src/lib.rs
+#+begin_src rust
+pub trait Messenger {
+    fn send(&self, msg: &str);
+}
+
+pub struct LimitTracker<'a, T: Messenger> {
+    messenger: &'a T,
+    value: usize,
+    max: usize,
+}
+
+impl<'a, T> LimitTracker<'a, T>
+where
+    T: Messenger,
+{
+    pub fn new(messenger: &T, max: usize) -> LimitTracker<T> {
+        LimitTracker {
+            messenger,
+            value: 0,
+            max,
+        }
+    }
+
+    pub fn set_value(&mut self, value: usize) {
+        self.value = value;
+
+        let percentage_of_max = self.value as f64 / self.max as f64;
+
+        if percentage_of_max >= 1.0 {
+            self.messenger.send("Error: You are over your quota!");
+        } else if percentage_of_max >= 0.9 {
+            self.messenger
+                .send("Urgent warning: You've used up over 90% of your quota!");
+        } else if percentage_of_max >= 0.75 {
+            self.messenger
+                .send("Warning: You've used up over 75% of your quota!");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    struct MockMessenger {
+        sent_messages: RefCell<Vec<String>>,
+    }
+
+    impl MockMessenger {
+        fn new() -> MockMessenger {
+            MockMessenger {
+                sent_messages: RefCell::new(vec![]),
+            }
+        }
+    }
+
+    impl Messenger for MockMessenger {
+        fn send(&self, message: &str) {
+            self.sent_messages.borrow_mut().push(String::from(message));
+        }
+    }
+
+    #[test]
+    fn it_sends_an_over_75_percent_warning_message() {
+        // --snip--
+        let mock_messenger = MockMessenger::new();
+        let mut limit_tracker = LimitTracker::new(&mock_messenger, 100);
+
+        limit_tracker.set_value(80);
+
+        assert_eq!(mock_messenger.sent_messages.borrow().len(), 1);
+    }
+}
+#+end_src
+代码 15-22. 当外部值被认为只读时使用RefCell<T>修改一个内部的值
+
+sent_messages字段现在的类型是RefCell<Vec<String>>代替之前的 Vec<String>. 在new函数里, 我们创建一个新的RefCell<Vec<String>>实例包裹空向量.
+
+对于send方法的实现, 第一个参数仍然是一个self的只读借用, 匹配特性的定义. 我们在self.sent_messages里调用RefCell<Vec<String>>上的borrow_mut方法来获取一个在RefCell<Vec<String>>内部的值的读写引用, 它是一个向量. 然后我们在向量的读写引用上调用push来跟踪测试阶段的消息发送.
+
+在断言里我们要做的最后修改是: 看在内部向量里有多少个元素, 我们调用 RefCell<Vec<String>>上的borrow来得到一个向量的只读引用.
+
+现在我们看一下如何使用RefCell<T>, 让我们深入它如何运作的!
+
+*** 跟踪RefCell<T>的运行时借用
+当创建只读和读写引用, 我们分别使用 & 和 &mut语法. 使用 RefCell<T>, 我们使用 borrow和borrow_mut方法, 这是属于RefCell<T>的安全api的一分部. borrow方法返回智能指针类型 Ref<T>, 然后 borrow_mut 返回智能指针类型 RefMut<T>. 两个类型都实现了Deref, 所以我们可以把它们当成常规引用.
+
+RefCell<T> 跟踪多少个Ref<T>和RefMut<T>智能指针当前活跃. 我们每次调用borrow,  RefCell<T>增加它的关于多少个只读指针活跃的计数. 当一个Ref<T>超出作用域, 只读借用的计数减一. 就像编译时的规则, RefCell<T>让在同一时间我们有一个指针的很多只读借用或者一个读写借用.
+
+如果我们尝试违反这些规则, 我们得到的不是一个引用的编译时错误, RefCell<T>的实现将在运行时恐慌. 代码15-23展示了一个在15-22里send实现的修改. 我们故意地尝试创建两个读写借用到相同的作用域下来展示RefCell<T>在运行时阻止我们这样做.
+
+文件名: src/lib.rs
+
+#+begin_src rust
+pub trait Messenger {
+    fn send(&self, msg: &str);
+}
+
+pub struct LimitTracker<'a, T: Messenger> {
+    messenger: &'a T,
+    value: usize,
+    max: usize,
+}
+
+impl<'a, T> LimitTracker<'a, T>
+where
+    T: Messenger,
+{
+    pub fn new(messenger: &T, max: usize) -> LimitTracker<T> {
+        LimitTracker {
+            messenger,
+            value: 0,
+            max,
+        }
+    }
+
+    pub fn set_value(&mut self, value: usize) {
+        self.value = value;
+
+        let percentage_of_max = self.value as f64 / self.max as f64;
+
+        if percentage_of_max >= 1.0 {
+            self.messenger.send("Error: You are over your quota!");
+        } else if percentage_of_max >= 0.9 {
+            self.messenger
+                .send("Urgent warning: You've used up over 90% of your quota!");
+        } else if percentage_of_max >= 0.75 {
+            self.messenger
+                .send("Warning: You've used up over 75% of your quota!");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    struct MockMessenger {
+        sent_messages: RefCell<Vec<String>>,
+    }
+
+    impl MockMessenger {
+        fn new() -> MockMessenger {
+            MockMessenger {
+                sent_messages: RefCell::new(vec![]),
+            }
+        }
+    }
+
+    impl Messenger for MockMessenger {
+        fn send(&self, message: &str) {
+            let mut one_borrow = self.sent_messages.borrow_mut();
+            let mut two_borrow = self.sent_messages.borrow_mut();
+
+            one_borrow.push(String::from(message));
+            two_borrow.push(String::from(message));
+        }
+    }
+
+    #[test]
+    fn it_sends_an_over_75_percent_warning_message() {
+        let mock_messenger = MockMessenger::new();
+        let mut limit_tracker = LimitTracker::new(&mock_messenger, 100);
+
+        limit_tracker.set_value(80);
+
+        assert_eq!(mock_messenger.sent_messages.borrow().len(), 1);
+    }
+}
+#+end_src
+代码 15-23: 在相同作用域下创建两个读写引用来看到RefCell<T>将恐慌
+
+我们给从borrow_mut返回的RefMut<T>智能指针创建一个变量one_borrow. 然后我们在变量two_borrow用相同的方式创建另一个读写借用, 这将不被允许. 当我们为我们的库运行测试时, 在代码15-23里的代码将没有任何错误编译, 但是测试将会失败:
+
+#+begin_src shell
+$ cargo test
+   Compiling limit-tracker v0.1.0 (file:///projects/limit-tracker)
+    Finished test [unoptimized + debuginfo] target(s) in 0.91s
+     Running unittests (target/debug/deps/limit_tracker-e599811fa246dbde)
+
+running 1 test
+test tests::it_sends_an_over_75_percent_warning_message ... FAILED
+
+failures:
+
+---- tests::it_sends_an_over_75_percent_warning_message stdout ----
+thread 'main' panicked at 'already borrowed: BorrowMutError', src/lib.rs:60:53
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::it_sends_an_over_75_percent_warning_message
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass '--lib'
+#+end_src
+
+注意代码以消息 already borrowed: BorrowMutError恐慌. 这就是RefCell<T>如何处理运行时借用规则的违反.
+
+在运行时捕捉借用错误而不是编译时意味着在更晚的时间你才能发现在开发阶段你的代码里的错误而且可能甚至你的代码被部署. 而且, 作为运行时而不是编译时跟踪借用的结果,你的代码将产生一点小的性能损耗. 然而, 当你使在一个只有只一个借用的值被允许的上下文环境里使用 RefCell<T>让写一个模拟可以修改它自己来跟踪它看见的对象成为可能, 你可以使用RefCell<T>尽管它的权衡得到比常规引用提供的更多功能.
+
+*** 组合Rc<T>和RefCell<T>拥有读写数据的多个所有者
+一个使用RefCell<T>的通用方式是和Rc<T>组合. 回顾Rc<T>让你有一些数据的多个所有者, 但是它只能那些数据的只读访问. 如果你有一个保存一个RefCell<T>的一个Rc<T>, 你可以得到一个可以有多个所有者的值然后你可以修改!
+
+比如, 回顾在代码15-18里的列表构造器例子我们使用Rc<T>允许多个列表共享其它列表的所有权. 因为 Rc<T> 只保存只读值, 一旦我们创建它们我们不能修改任何在列表里的值. 让我们添加到RefCell<T>来获得在列表里的值的能力. 代码 15-24 展示了通过使用一个RefCell<T>到Cons的定义, 我们可以修改在所有列表里保存的值;
+
+文件名: src/main.rs
+#+begin_src rust
+#[derive(Debug)]
+enum List {
+    Cons(Rc<RefCell<i32>>, Rc<List>),
+    Nil,
+}
+
+use crate::List::{Cons, Nil};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+fn main() {
+    let value = Rc::new(RefCell::new(5));
+
+    let a = Rc::new(Cons(Rc::clone(&value), Rc::new(Nil)));
+
+    let b = Cons(Rc::new(RefCell::new(3)), Rc::clone(&a));
+    let c = Cons(Rc::new(RefCell::new(4)), Rc::clone(&a));
+
+    *value.borrow_mut() += 10;
+
+    println!("a after = {:?}", a);
+    println!("b after = {:?}", b);
+    println!("c after = {:?}", c);
+}
+#+end_src
+代码 15-24: 使用Rc<RefCell<i32>> 创建一个我们可以修改的列表
+
+我们创建一个作为一个Rc<RefCell<i32>>实例的值然后在一个叫value的变量里保存所以我们后面可以直接访问它. 然后我们使用一个Cons变量创建一个在a里的List保存value. 我们需要去克隆value来让a和value两者有内部的值5的所有权而不是从value到a转化所有权或者从value获取一个a借用a.
+
+我们包裹列表a在一个Rc<T>里所以当 我们创建列表b和c, 它们两者都可以引用到a, 这就是我们在代码15-18里所做的.
+
+我们创建完在a,b和c里面的列表以后, 我们在value的值里加10. 我们通过调用 value
+上的 borrow_mut实现这个, 这使用了我们在第5章讨论的自动解引用功能(看章节"->操作符在哪里?")来解引用 Rc<T>到内部的RefCell<T>值. borrow_mut方法返回一个RefMut<T>智能指针, 然后我们在它上面使用解引用操作然后修改内部值.
+
+当我们输出 a,b和c, 我们可以看到它们所有都被改成了值15而不是5:
+
+#+begin_src shell
+$ cargo run
+   Compiling cons-list v0.1.0 (file:///projects/cons-list)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.63s
+     Running `target/debug/cons-list`
+a after = Cons(RefCell { value: 15 }, Nil)
+b after = Cons(RefCell { value: 3 }, Cons(RefCell { value: 15 }, Nil))
+c after = Cons(RefCell { value: 4 }, Cons(RefCell { value: 15 }, Nil))
+#+end_src
+
+这个技术非常简洁! 通过使用RefCell<T>, 我们有了一个外向的只读 List 值. 但是我们可以使用RefCell<T>提供的访问它内部可修改的方法所以当我们需要的时候我们可以修改我们的数据. 借用规则的运行时检查从数据竞争中阻止我们, 在我们数据结构里的这个扩展性有时候值得考虑一下速度.
+
+标准库有提供内部修改的其它类型, 比如Cell<T>, 除了给不引用到内部值而是在Cell<T>外面复制它它很相似. 也有Mutex<T>,它提供安全的跨线程的内部可修改; 我们将在16章讨论它. 这些类型的不同点的更多细节参考标准库文档.
+
+** 循环引用会泄漏内存
+Rust的内存安全保障让它很难, 但不是不可能, 偶尔地创建从不清理的内存(内存泄漏). 阻止内存泄漏完全不是Rust的在不允计编译时数据竞争相同方式的保证之一, 意味着内存泄漏是rust里的内存安全. 我们可以看到rust通过使用Rc<T>和RefCell<T>允许内存泄漏: 可能创建在一个环里元素相互引用的引用. 这就创建了内存泄漏因为在环里每个元素的引用计数将永远不会为0, 然后值将永远不被销毁.
+
+*** 创建一个引用环
+让我们看一下一个引用环可能如何发生和如何阻止它, 以List枚举和一个在15-25里的tail方法的定义开始:
+
+文件名: src/main.rs
+#+begin_src rust
+use crate::List::{Cons, Nil};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+#[derive(Debug)]
+enum List {
+    Cons(i32, RefCell<Rc<List>>),
+    Nil,
+}
+
+impl List {
+    fn tail(&self) -> Option<&RefCell<Rc<List>>> {
+        match self {
+            Cons(_, item) => Some(item),
+            Nil => None,
+        }
+    }
+}
+
+fn main() {}
+#+end_src
+代码 15-25: 一个保存RefCell<T>的列表构造器定义我们可以修改一个Cons变量引用的东西
+
+我们使用另一个从代码15-5里来的List定义的变量. Cons变量里的第二个元素现在是RefCell<Rc<List>>, 意味着代替拥有修改i32值作为我们在代码15-24里的能力, 我们想要修改到一个Cons变量的List指向的那一个. 如果我们有一个Cons变量我们也添加一个tail
+方法来给我们提供方便于访问第二个元素.
+
+在代码 15-26里,我们添加一个main函数使用在15-25里的定义. 这段代码创建了一个a里的列表和一个b里的列表指向在a里的列表. 然后它修改在a里的列表指向b, 创建一个引用循环. 有一个println! 语句来展示在这个过程中的不同变量里引用计数是什么.
+
+文件名: src/main.rs
+#+begin_src rust
+use crate::List::{Cons, Nil};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+#[derive(Debug)]
+enum List {
+    Cons(i32, RefCell<Rc<List>>),
+    Nil,
+}
+
+impl List {
+    fn tail(&self) -> Option<&RefCell<Rc<List>>> {
+        match self {
+            Cons(_, item) => Some(item),
+            Nil => None,
+        }
+    }
+}
+
+fn main() {
+    let a = Rc::new(Cons(5, RefCell::new(Rc::new(Nil))));
+
+    println!("a initial rc count = {}", Rc::strong_count(&a));
+    println!("a next item = {:?}", a.tail());
+
+    let b = Rc::new(Cons(10, RefCell::new(Rc::clone(&a))));
+
+    println!("a rc count after b creation = {}", Rc::strong_count(&a));
+    println!("b initial rc count = {}", Rc::strong_count(&b));
+    println!("b next item = {:?}", b.tail());
+
+    if let Some(link) = a.tail() {
+        *link.borrow_mut() = Rc::clone(&b);
+    }
+
+    println!("b rc count after changing a = {}", Rc::strong_count(&b));
+    println!("a rc count after changing a = {}", Rc::strong_count(&a));
+
+    // Uncomment the next line to see that we have a cycle;
+    // it will overflow the stack
+    // println!("a next item = {:?}", a.tail());
+}
+#+end_src
+代码 15-26: 创建两个List值相互引用的引用循环
+
+我们创建一个Rc<List> 实例保存一个在有初始列表5,Nil的列表的变量a里的List值. 然后我们创建一个Rc<List>实现保存另一个在变量b里的包含值10和指向在a里的列表的List值.
+
+我们修改a让它指向b而不是Nil, 创建一个循环, 我们通过使用tail方法得到一个在a里的RefCell<Rc<List>>的引用实现, 它就是我们放置在变量link里面的. 然后我们使用 在RefCell<Rc<List>>上的borrow_mut方法来修改保存一个Nil值的Rc<List>里的值为b里的 Rc<List>.
+
+ 然后当我们运行这个代码, 让最后一个 println! 暂时注释掉, 我们将得到这个输出:
+ #+begin_src rust
+ $ cargo run
+   Compiling cons-list v0.1.0 (file:///projects/cons-list)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.53s
+     Running `target/debug/cons-list`
+a initial rc count = 1
+a next item = Some(RefCell { value: Nil })
+a rc count after b creation = 2
+b initial rc count = 1
+b next item = Some(RefCell { value: Cons(5, RefCell { value: Nil }) })
+b rc count after changing a = 2
+a rc count after changing a = 2
+ #+end_src
+
+我们修改在a里的列表指向b以后, 在a和b里的Rc<List>实例的引用计数是2, rust删除了变量b, 我们从2到1减少Rc<List>实例的引用计数. Rc<List>在堆上的内存在这点将不被销毁, 因为它的引用计数是1, 不是0, 然后rust删除a, 这也从2到1减少了a Rc<List>实例的引用计数. 实例的内存也不被销毁, 因为另一个 Rc<List>实例仍然引用它. 分配到列表上的内存将永远保留不回收. 看这个引用循环, 我们创建了图 15-4
+[[https://doc.rust-lang.org/book/img/trpl15-04.svg]]
+图 15-4: 一个列表a和b相互引用的引用循环
+
+如果你取消最后 个 println!然后运行程序, rust将尝试这个循环, a指向b,b指向a然后以此类推至到栈溢出.
+
+这种情况下, 在我们创建引用循环以后, 程序终止了. 这个循环的序列不是很可怕. 然而, 如果一个更复杂的程序在一个循环里分配很多的内存然后很长时间拥有它, 程序将使用比它需要的更多内存然后可能压倒系统, 导致运行超出可用内存.
+
+创建一个引用循环不是更早的做, 但是它也不是不可能. 如果你有包含Rc<T>值或者相似的嵌套有内在可修改和引用计数的类型结合的 RefCell<T>值, 你必须确保你不创建循环; 你不能依靠rust来捕捉它们. 创建一个引用循环将是你你将使用自动测试的程序里的逻辑问题, 代码审查, 和其它软件开发来最小化.
+
+避免引用循环的另一个方法是重组你的数据结构让一些引用表达所有权然后一些引用不要. 结果是,你可以有一些所有权关系的循环和一些非所有权关系, 唯一的所有权影响是否一个值应该被销毁.  在代码 15-25里, 我们总是想Cons变量拥有他们的列表, 所以重组数据结构变得不可能. 让我们看一个使用图构建父结点和子结点的例子, 来看看什么时候没有所有者关系是一种阻止循环引用的可行方式.
+
+*** 阻止引用循环: 转换 Rc<T>为 Weak<T>
+目前为止, 我们描述了调用Rc::clone来增加Rc<T>实例的 strong_count, 然后如果 strong_count是0 ,只有Rc<T>实例被清理. 你也可以创建一个弱引用到值上面, 调用Rc::downgrade使用一个 Rc<T>然后传递一个引用到 Rc<T>. 当你调用 Rc::downgrade, 你得到一个Rc::downgrade的智能指针而不是增加Rc<T>的值 strong_count 1, 调用 Rc::downgrade增加 weak_count 1, Rc<T>类型使用 weak_count跟踪多少个 Weak<T>引用存在, 类似于 strong_count. 区别是weak_count不需要变成0 Rc<T>实例就可以被清理.
+
+强引用是你能如何共享一个Rc<T>实例的所有权. 弱引用不表达一个所有权关系. 他们不会导致引用循环因为一旦关联的值的强引用计数为0时任何关联着一些弱引用的循环将被打破.
+
+因为 Weak<T>引用的值可能被销毁, 使用一个Weak<T>指向的值做任何事情, 你必须确保值还存在着. 调用一个Weak<T>实例上的 updgrade方法做这个, 它将返回一个 Option<Rc<T>>. 如果 Rc<T>值还没有被销毁你将得到一个Some的结果,如果Rc<T>值被销毁了就是一个None的结果. 因为upgrade返回一个 Option<Rc<T>>, rust将确保Some情况和None情况都被处理, 然后这将不会有一个非法指针.
+
+作为一个例子, 对比使用一个它们的元素只知道下一个元素的列表, 我们将创建一个树, 它们的元素知道它们的子元素和它们的父结点.
+
+*** 创建一个树数据结构: 有子结点的一个结点
+开始, 我们将创建一个有知道它们子结点的结点的树. 我们创建一个叫Node的结构体保存它自己的i32值和它的子结点Node值的引用:
+
+文件名: src/main.rs
+#+begin_src rust
+use std::cell::RefCell;
+use std::rc::Rc;
+
+#[derive(Debug)]
+struct Node {
+    value: i32,
+    children: RefCell<Vec<Rc<Node>>>,
+}
+
+fn main() {
+    let leaf = Rc::new(Node {
+        value: 3,
+        children: RefCell::new(vec![]),
+    });
+
+    let branch = Rc::new(Node {
+        value: 5,
+        children: RefCell::new(vec![Rc::clone(&leaf)]),
+    });
+}
+#+end_src
+
+我们想要一个Node拥有它自己的孩子, 而且我们想要和变量共享所有权以至于我们可以在树上直接地访问每个Node. 这样, 我们定义Vec<T>元素为类型Rc<Node>类型. 我们也想要修改结点是其它哪一个结点的孩子, 所以我们有了一个 围绕着Vec<Rc<Node>>的children里的RefCell<T>.
+
+下一步, 我们将使用我们的结构体定义然后创造一个值为3的没有孩子的叫leaf的Node实例, 和另一个值为5的leaf作为它的一个孩子的叫branch的实例, 如代码 15-27:
+
+文件名: src/main.rs
+#+begin_src rust
+use std::cell::RefCell;
+use std::rc::Rc;
+
+#[derive(Debug)]
+struct Node {
+    value: i32,
+    children: RefCell<Vec<Rc<Node>>>,
+}
+
+fn main() {
+    let leaf = Rc::new(Node {
+        value: 3,
+        children: RefCell::new(vec![]),
+    });
+
+    let branch = Rc::new(Node {
+        value: 5,
+        children: RefCell::new(vec![Rc::clone(&leaf)]),
+    });
+}
+#+end_src
+代码 15-27: 创建一个没有孩子的leaf结点和有leaf作为它的孩子的branch结点
+
+我们克隆在leaf里的Rc<Node>然后保存在branch里, 意味着在leaf里的Node现在有两个拥有者: leaf和branch. 我们可以通过branch.children得到从branch到leaf, 但是没有方法从leaf得到branch. 原因是leaf没有到branch的引用而且不知道它们关联着. 我们想要leaf知道branch是它的父结点. 下面我们将完在这些.
+
+*** 添加一个从子结点到它的父结点的引用
+为了让子结点知道它的父结点, 我们需要添加一个parent字段到我们的Node结构体定义. 问题是决定parent的类型应该是什么. 我们知道它可以包含一个Rc<T>, 因为那将创建一个有leaf.partent指向branch和branch.children指向leaf的引用循环, 这将导致它们的 strong_count值永远不会为0.
+
+思考关系的另一种方式, 一个父结点应该拥有它的孩子: 如果父结点被销毁,它的孩子也应该被销毁. 然而,一个孩子不应该拥有它的父结点: 如果我们删除一个子结点, 父结点应该仍然存在. 这是弱引用的一个情景!
+
+所以不使用 Rc<T>, 我们创建使用 Weak<T>的parent类型, 具体来说是一个RefCell<Weak<Node>>. 现在我们的Node结构体定义看起来像这样:
+
+文件名: src/main.rs
+#+begin_src rust
+use std::cell::RefCell;
+use std::rc::{Rc, Weak};
+
+#[derive(Debug)]
+struct Node {
+    value: i32,
+    parent: RefCell<Weak<Node>>,
+    children: RefCell<Vec<Rc<Node>>>,
+}
+
+fn main() {
+    let leaf = Rc::new(Node {
+        value: 3,
+        parent: RefCell::new(Weak::new()),
+        children: RefCell::new(vec![]),
+    });
+
+    println!("leaf parent = {:?}", leaf.parent.borrow().upgrade());
+
+    let branch = Rc::new(Node {
+        value: 5,
+        parent: RefCell::new(Weak::new()),
+        children: RefCell::new(vec![Rc::clone(&leaf)]),
+    });
+
+    *leaf.parent.borrow_mut() = Rc::downgrade(&branch);
+
+    println!("leaf parent = {:?}", leaf.parent.borrow().upgrade());
+}
+#+end_src
+
+一个结点应该可以引用它的父结点但是不拥有它的父结点. 在代码15-28里, 我们修改main 使用新的定义所以leaf结点将有一个引用它父结点的方式,breach:
+
+文件名: src/main.rs
+#+begin_src rust
+use std::cell::RefCell;
+use std::rc::{Rc, Weak};
+
+#[derive(Debug)]
+struct Node {
+    value: i32,
+    parent: RefCell<Weak<Node>>,
+    children: RefCell<Vec<Rc<Node>>>,
+}
+
+fn main() {
+    let leaf = Rc::new(Node {
+        value: 3,
+        parent: RefCell::new(Weak::new()),
+        children: RefCell::new(vec![]),
+    });
+
+    println!("leaf parent = {:?}", leaf.parent.borrow().upgrade());
+
+    let branch = Rc::new(Node {
+        value: 5,
+        parent: RefCell::new(Weak::new()),
+        children: RefCell::new(vec![Rc::clone(&leaf)]),
+    });
+
+    *leaf.parent.borrow_mut() = Rc::downgrade(&branch);
+
+    println!("leaf parent = {:?}", leaf.parent.borrow().upgrade());
+}
+#+end_src
+代码 15-28: 一个弱引用到它父结点branch的leaf结点
+
+创建一个leaf结点看起来像如梭增加leaf结点在代码15-27使用parent字段的例外: leaf开始没有父结点, 所以我们创建一个新的,空的Weak<Node>引用实例.
+
+这种情况下, 当我们尝试通过使用upgrade方法得到leaf父结点的引用时, 我们得到一个None值. 我们从第一个println!语句的输出里看到:
+#+begin_src
+leaf parent = None
+#+end_src
+
+当我们创建branch结点, 它将也有一个新的在parent字段里的 Weak<Node>引用, 因为branch不拥有父结点. 我们也将作为branch孩子的一个拥有leaf. 一旦我们拥有了在branch上的Node实例, 我们可以修改leaf来给它一个到它父结点的 Weak<Node>引用. 我们在leaf的parent字段上使用RefCell<Weak<Node>>的borrow_mut方法, 然后我们使用 Rc::downgrade函数创建一个从branch里的Rc<Node>到branch的Weak<Node>引用.
+
+当我们再次罗出leaf的父结点, 这次我们将得到一个保存branch的Some变体: 现在 leaf可以访问它的父结点!当我们输出 leaf, 我们也将最终避免在一个栈溢出里的循环像在代码15-26里的; Weak<Node>引用被输出为(Weak):
+#+begin_src
+leaf parent = Some(Node { value: 5, parent: RefCell { value: (Weak) },
+children: RefCell { value: [Node { value: 3, parent: RefCell { value: (Weak) },
+children: RefCell { value: [] } }] } })
+#+end_src
+
+*** 到 stong_count和weak_count的可视化改变
+通过创建一个新的内部作用域然后移动branch的创建到那个作用域里面, 让我们看一下Rc<Node>实例的strong_count和weak_count值如何改变. 做完这个, 我们可以看到当branch被创建以后和之后当它超出作用域被销毁发生了什么. 修改如代码15-29:
+
+文件名: src/main.rs
+#+begin_src rust
+use std::cell::RefCell;
+use std::rc::{Rc, Weak};
+
+#[derive(Debug)]
+struct Node {
+    value: i32,
+    parent: RefCell<Weak<Node>>,
+    children: RefCell<Vec<Rc<Node>>>,
+}
+
+fn main() {
+    let leaf = Rc::new(Node {
+        value: 3,
+        parent: RefCell::new(Weak::new()),
+        children: RefCell::new(vec![]),
+    });
+
+    println!(
+        "leaf strong = {}, weak = {}",
+        Rc::strong_count(&leaf),
+        Rc::weak_count(&leaf),
+    );
+
+    {
+        let branch = Rc::new(Node {
+            value: 5,
+            parent: RefCell::new(Weak::new()),
+            children: RefCell::new(vec![Rc::clone(&leaf)]),
+        });
+
+        *leaf.parent.borrow_mut() = Rc::downgrade(&branch);
+
+        println!(
+            "branch strong = {}, weak = {}",
+            Rc::strong_count(&branch),
+            Rc::weak_count(&branch),
+        );
+
+        println!(
+            "leaf strong = {}, weak = {}",
+            Rc::strong_count(&leaf),
+            Rc::weak_count(&leaf),
+        );
+    }
+
+    println!("leaf parent = {:?}", leaf.parent.borrow().upgrade());
+    println!(
+        "leaf strong = {}, weak = {}",
+        Rc::strong_count(&leaf),
+        Rc::weak_count(&leaf),
+    );
+}
+#+end_src
+代码 15-29: 创建一个在内部作用域里的branch然后检测强弱引用计数
+
+leaf被创建以后, 它的Rc<Node>有一个为1的强引用和一个为0的弱引用. 在内部作用域, 我们创建 branch然后把它关联到leaf, 那时当我们输出计数, branch里的Rc<Node>将有一个为1的强计数和一个为1的弱计数(因为 leaf.parent指向有Weak<Node>的branch). 当我们输出在leaf上的计数, 我们将看到它将有一个为2的强计数, 因为现在branch有一个leaf的Rc<node>的克隆保存在branch.children里, 但是仍然有一个为0的弱引用.
+
+当内部作用域结束, branch超出作用域然后Rc<Node>的强计数减到0, 所以它的Node被销毁了. 来自leaf.parent的为1的弱计数不决定Node是否被销毁, 所以我们没有得到任何内存泄漏!
+
+如果在作用域的结束我们尝试访问leaf的父结点, 我们将再次得到None, 在程序的结尾, 在leaf里的Rc<Node>有一个为1的强引用和一个为0的弱引用, 因为leaf变量现在只再次引用到Rc<Node>.
+
+管理计数和值销毁的所有逻辑内置于 Rc<T>和Weak<T>和它们的Drop特性的实现里. 通过指定从孩子到它的父结点的关联为一个 Node定义里的Weak<T>引用, 你可以有到孩子结点的父结点和没有创建引用循环和内存泄漏的副作用.
+
+*** 总结
+这章覆盖了如何使用智能指针来让创建不同的保证和来自Rust和常规引用默认创建的这些的权衡. Box<T>有一个已经和尺寸然后指向堆上的数据分配. Rc<T>类型跟踪在堆上的引用计数所以我们可以有多个引用. 有内部可修改的RefCell<T>类型给我们一种当我们需要一个不可变类型但是需要修改那个类型的内部值我们可以使用的类型; 它也执行了运行时而不是编译时的借用规则.
+
+也讨论了Deref和Drop特性, 这开启了很多的智能指针的功能. 我们解释可能导致内存泄漏的引用循环和使用Weak<T>如何阻止它们.
+
+如果这章激起了你的兴趣你想要实现你自己的智能指针,更多有用信息检查"[[https://doc.rust-lang.org/nomicon/index.html][The Rustonomicon]]".
+
+下面, 我们将讨论rust里的并发. 你甚至将学到一个新的智能指针.
+
+
