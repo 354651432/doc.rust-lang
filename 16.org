@@ -589,3 +589,197 @@ fn main() {
 
 删除完锁以后, 我们可以输出互斥对象值然后看到我们可以修改内部的 i32为6.
 
+*** 多线程间共享 Mutext<T>
+现在, 我们尝试使用Mutext<T>在线程间共享一个值. 我们将启动10个线程然后让他们每个把值计数加1, 然后值从0加到10. 在16-13里的下一个例子将有一个编译错误, 然后我们将使用那个错误学习更多关于Mutext<T>和rust如何帮助正确地我们使用它.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::sync::Mutex;
+use std::thread;
+
+fn main() {
+    let counter = Mutex::new(0);
+    let mut handles = vec![];
+
+    for _ in 0..10 {
+        let handle = thread::spawn(move || {
+            let mut num = counter.lock().unwrap();
+
+            *num += 1;
+        });
+        handles.push(handle);
+    }
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    println!("Result: {}", *counter.lock().unwrap());
+}
+#+end_src
+代码 16-13: 10个线程每个增加被Mutext<T>守护的计数
+
+我们创建一个counter变量保存一个i32的到一个Mutext<T>里, 就像我们在16-22里做的一样. 下面, 我们使用迭代一个数字的范围创建10个线程. 我们使用 thread::spawn 然后得到相同必包的所有线程, 那个必包移动计数到线程里 ,通过调用 lock方法请求锁, 然后在互斥对象里加1到值上面. 然后一个线程运行它的必包, num将超出作用域然后释放锁导致其它的线程不能请求它.
+
+主线程里, 我们收集所有的合并句柄. 然后, 我们在16-2里这样做, 我们在每个线程上调用 join来确保所有的线程完成. 那个点上, 主线程将请求锁然后输出这个程序的结果.
+
+我们提示这个线程不能被编译, 现在让我们看一下为什么!
+
+#+begin_src shell
+$ cargo run
+   Compiling shared-state v0.1.0 (file:///projects/shared-state)
+error[E0382]: use of moved value: `counter`
+  --> src/main.rs:9:36
+   |
+5  |     let counter = Mutex::new(0);
+   |         ------- move occurs because `counter` has type `Mutex<i32>`, which does not implement the `Copy` trait
+...
+9  |         let handle = thread::spawn(move || {
+   |                                    ^^^^^^^ value moved into closure here, in previous iteration of loop
+10 |             let mut num = counter.lock().unwrap();
+   |                           ------- use occurs due to use in closure
+
+For more information about this error, try `rustc --explain E0382`.
+error: could not compile `shared-state` due to previous error
+#+end_src
+
+错误消息指出counter值被移动到前一个循环的迭代里. 所以rust告诉我们我们不可以移动counter锁的所有权到多个线程里. 使用一个我们在15章讨论过的多线程所有权方法让我们修正编译错误.
+
+*** 多线程的多所有权
+在15章, 我们通过使用智能指针 Rc<T>给一个值多个所有权来创建一个引用计数值. 在这里让我们做同样的事情然后看发什么了w教参. 在代码16-14里移动所有权到线程里前我们包裹Mutext<T>到Rc<T>里然后克隆Rc<T>.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::rc::Rc;
+use std::sync::Mutex;
+use std::thread;
+
+fn main() {
+    let counter = Rc::new(Mutex::new(0));
+    let mut handles = vec![];
+
+    for _ in 0..10 {
+        let counter = Rc::clone(&counter);
+        let handle = thread::spawn(move || {
+            let mut num = counter.lock().unwrap();
+
+            *num += 1;
+        });
+        handles.push(handle);
+    }
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    println!("Result: {}", *counter.lock().unwrap());
+}
+#+end_src
+代码 16-14: 尝试使用Rc<T>允许多个线程拥有Mutex<T>
+
+再次, 我们编译然后得到不同的错误! 编译器正在教我们更多.
+#+begin_src shell$ cargo run
+   Compiling shared-state v0.1.0 (file:///projects/shared-state)
+error[E0277]: `Rc<Mutex<i32>>` cannot be sent between threads safely
+   --> src/main.rs:11:22
+    |
+11  |           let handle = thread::spawn(move || {
+    |  ______________________^^^^^^^^^^^^^_-
+    | |                      |
+    | |                      `Rc<Mutex<i32>>` cannot be sent between threads safely
+12  | |             let mut num = counter.lock().unwrap();
+13  | |
+14  | |             *num += 1;
+15  | |         });
+    | |_________- within this `[closure@src/main.rs:11:36: 15:10]`
+    |
+    = help: within `[closure@src/main.rs:11:36: 15:10]`, the trait `Send` is not implemented for `Rc<Mutex<i32>>`
+    = note: required because it appears within the type `[closure@src/main.rs:11:36: 15:10]`
+
+For more information about this error, try `rustc --explain E0277`.
+error: could not compile `shared-state` due to previous error
+#+end_src
+
+那个错误消息如此哆嗦! 这里需要关注的重要部分是: `Rc<Mutex<i32>>` cannot be sent between threads safely. 编译器也告诉了我们原因: the trait 'Send' is not implemented for `Rc<Mutext<i32>>`. 下一章我们将讨论Send: 这是确保我们使用在在并发状态下使用得有意义的线程里的类型的特性中的一个.
+
+很不幸, Rc<T> 跨线程共享不安全. 当 Rc<T>管理引用计数, 它增加每个调用clone的计数然后当每个克隆被销毁时从计数里减去. 但它没有使用任何并发基础来确保对计数的修改不能被其它线程打断. 这可能导致错误的计数-- 导致内存泄漏或者一个值在我们使用它前被销毁的轻微bug. 我们需要的是一个像Rc<T>一样准确的类型而不是在一种线程安全的方式对引用计数的修改.
+
+*** Arc<T>原子引用计数
+幸运的是, Arc<T>是一个在并发环境下像安全的像Rc<T>一样的类型. a代表元子, 意味着它是一个元子化的引用计数类型. 元子化是我们不想在这里详细覆盖的并发基础的一个额外种类:  std::sync::atomic的更多细节参数标准库文档. 这里, 你只需要知道元子的运作机制类似基础类型但是可以安全的跨线程共享.
+
+让我们回到例子: Arc<T>和Rc<T>有相同的API, 所以我们修改use行修正我们的程序, 对new的调用, 和对clone的调用. 在16-15里的代码将最终编译运行:
+
+文件名: src/main.rs
+#+begin_src rust
+use std::sync::{Arc, Mutex};
+use std::thread;
+
+fn main() {
+    let counter = Arc::new(Mutex::new(0));
+    let mut handles = vec![];
+
+    for _ in 0..10 {
+        let counter = Arc::clone(&counter);
+        let handle = thread::spawn(move || {
+            let mut num = counter.lock().unwrap();
+
+            *num += 1;
+        });
+        handles.push(handle);
+    }
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    println!("Result: {}", *counter.lock().unwrap());
+}
+#+end_src
+代码16-15: 使用Arc<T>包裹Mutex<T>来跨线程共享所有权
+
+代码输出如下:
+#+begin_src
+Result: 10
+#+end_src
+
+我们成功了! 我们的计数从0到加10, 看起来不是那么感人, 但它教会了我们关于Mutext<T>和线程安全的很多. 你也可以看见这个程序的结构和只增加一个计数器比起来变得更加操作复杂. 使用这个策略, 你可以把一个计算拆分成独立的部分, 跨线程拆分这些部分, 然后使用一个Mutex<T>给每个线程更新它的部分最终结果.
+
+*** RefCell<T>/Rc<T>和Mutex<T>/Arc<T>的相似
+你可能已经注意到counter是只读的但我们可以得到一个内部值的读写引用, 这意味着 Mutex<T>提供内部的读写, 就像Cell家族做的. 以我们在15章使用RefCell<T>相同的方式来允许我们读写在一个Rc<T>内部的内容, 我们使用Mutext<T>来读写在一个Arc<T>里的内容.
+
+另一个需要注意的细节是当你使用Mutext<T>时rust不阻止你各种逻辑错误. 回顾15章使用Rc<T>伴随着创建引用循环的风险, 两个Rc<T>相互引用对方, 导致的内存泄漏. 类似的, Mutex<T>伴随着创造死锁的风险. 当一个操作需要锁住两个资源然后两个线程请求相互的锁时这些将发生, 尝试创建一个死锁的rust程序; 然后搜索在任意语言里互斥对象的死锁减少策略然后在rust里实现它们. Mutex<T>的标准库API文档提供了有用的信息.
+
+讨论Send和Sync特性和我们如何使用它们处理自宝义类型时我们将返回这章.
+
+** 使用Sync和Send特性扩展并发
+有趣的是, rust语言只有很少的并发特性. 我们在本章里目前为止讨论的几乎所有的并发特性都是标准库的一部分, 不是语言的. 你处理并发的选项不被语言或者标准库限制; 你可以编写自己的并发特性或者使用其它人写的这些.
+
+然而, 两个并发概念被嵌入到语言里: std::marker特性Sync和Send.
+
+*** 使用Send允许线程间转化所有权
+Send标记特性表明实现Send的类型的值的所有权可以在线程间转移. 几乎所有的rust类型都是Send, 但有一些例外, 包括Rc<T>: 这不能被Send 因为如果你克隆一个 Rc<T>值然后尝试转化克隆的所有权到另一个线程, 两个线程都可能修改在相同时间修改引用计数. 出来这个原因, Rc<T>被实现在单线程环境你别想承担线程安全表现的惩罚.
+
+因此, rust类型系统和特性边界确保了你永远不可能偶然地非安全地跨线程发送一个Rc<T>值. 当我们在16-14里尝试这样做, 我们得到一个错误 the trait Send is not implemented for Rc<Mutex<i32>>. 当我们切换到 Arc<T>, 它是Send, 代码编译了.
+
+Send类型的所有类型的完全组装也自动地被标记为Send, 几乎所有的基础类型都是Send, 一部分的原始指针, 我们在19章讨论过的.
+
+*** 使用Sync允许来自多线程的访问
+Sync标记特性表明实现了Sync的类型从多线程传递引用是安全的. 换句话说, 如果&T(T的一个只读引用)是Send任何类型T是Sync, 意味着引用可以被安全地发送到另一个线程, 基础类型是Sync, Sync的类型的全部地类型组装也有Sync一样.
+
+智能指针Rc<T>也不Sync一样出于相同的原因不是Send. RefCell<T>  类型(我们在15章讨论的)和相关的Cell<T>类型家族不是Sync. 运行时的RefCell<T>做的借用检查的实现是Sync然后可以被使用来跨线程共享访问就像你在"线程间共享 Mutex<T>"章里看到的.
+
+*** 手动实现Send和Sync不安全
+因为制造Send和Sync的类型是和Send和Sync一样自动化地, 我们不必要手动地实现这些特性. 作为标记特性, 它们甚至没有任何方法需要实现. 它们仅仅用来确保常量关联到并发.
+
+手动实现这些特性涉及实现不安全的rust代码. 我们将在19章讨论使用不安全的rust代码; 现在, 实现信息是构建新的并发类型不制造Send和Sync部分需要仔细思考安全保障. "[[https://doc.rust-lang.org/nomicon/index.html][The Rustionimicon]]"有关于这些保障的更多信息和如何去保障它们.
+
+*** 总结
+这不是本书里关于并发你将看到的最后内容: 在20章的项目里将在比这里讨论的小例子更实际的场景里使用在本章里的概念.
+
+如之前提及的, 困为rust处理如何并发非常少是语言的一部分, 许多并发场景被实现为Crates, 这些实现比标准库发展更快, 所以现在一定要在线搜索, state-of-art crates用来在多线程场景下使用.
+
+rust标准库提供消息传递管道和智能指针类型, 比如 Mutext<T>和Arc<T>, 这些可以在并发环境里安全使用. 类型系统和借用检查确保在这些场景下使用的代码将不会触及数据竞争或者非法引用. 一旦你的代码编译, 你可以放心它将在多线程环境下开心地运行没有在其它语言里的难以跟踪的通用bug, 并发语言不再是一个让人害怕的概念: 支吧, 让你的程序并发,无所畏惧!
+
+下面, 我们将讨论现在语言的通用方式和当你的rust程序变更大时候的结构解决方案. 额外地, 我们将讨论rust成语如何关联到你可能在面向对象语言里熟悉的这些.
+
+
