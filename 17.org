@@ -1,0 +1,1020 @@
+* rust的面向对象编程特性
+面向对象编程语言(OOP)是现在编程的一种方式. 对象来自19世纪70年代的模拟. 这些对象在哪个对象被相互传递消息给其它对象方面被Alan Kay的编程结构影响着. 他在1967年创造面向对象术语来描述这种结构. 许多描述OOP是什么的完整的定义是; 一些定义把rust分类到了面向对象, 但是另一些其它的定义没有. 在本章, 我们将解释通用的被认为是面向对象的特定特征和这些特性如何转化成rust的方言. 然后我们将展示在rust里如何实现一个面向对象设计模式然后描述通过一些rust的估批代替做这些实现一个解决方案的权衡.
+
+** 面向对象语言的特性
+毫无疑问关于什么特性是一个语言必须考虑为面向对象的语言交流里. rust被许多编程范式影响着,包括OOP; 比如, 我们解释在13章里来自函数式语言的特性. 可以说, OOP语言共享特定的通用特性, 就是对象, 封闭, 和继承. 让我们看一下这些特性意味着什么和rust是否实现了它.
+
+*** 对象包括数据和行为
+设计模式的书: Erich Gamma,...写的重要面向对象软件的元素, 是一个面向对象设计模式的分类, 它用这种方式定义OOP:
+#+begin_quote
+面向对象编程由对象组成. 一个对象包括数据和处理那些数据的程序. 那个程序通常被称为方法或者是操作符
+#+end_quote
+
+使用这个定义, rust是面向对象的: 结构体和枚举是数据,impl提供块结构体和枚举上的方法. 尽管有方法的结构体和枚举不叫对象, 它们提供相同的功能, 根据Gang of Four的对象的定义.
+
+*** 隐藏实现细节的封装
+通常关联着OOP的另一个方面是封装的想法, 这意味着一个对象的实现细节对于使用那个对象的代码是不可见的. 因此, 和一个对象交互的唯一方式是通过它的公式API; 使用对象的代码不可以访问对象的内部和修改数据或者直接地行为. 这让程序员来修改和反射一个对象的内部不需要修改使用对象的代码.
+
+在第7章我们讨论了如何控制封装: 我们可以使用pub关键字决定哪个在我们代码里的模块, 类型,函数和方法可以被公开, 然后默认其它的所有东西都是私有的. 比如, 我们定义一个结检体 AveragedCollection 有一个包含i32值的向量的字段. 结构体也可以有一个包含在向量里的值的平均值的字段, 意味着不管是否需要平均值都不必须被计算. 换句话说, AveragedCollection 将为我们缓存计算的平均值. 代码17-1有AveragedCollection结构体的定义:
+
+文件名: src/lib.rs
+#+begin_src rust
+pub struct AveragedCollection {
+    list: Vec<i32>,
+    average: f64,
+}
+#+end_src
+代码 17-1: 一个包含数字列表和在集体里的元素的平均值的结构体 AveragedCOllection
+
+结构体被标记为pub所以其它的代码可以使用它, 但是结果体里的字段还是私有的. 这个情况下这很重要, 因为我们想要确保不管一个值被添加或者从列表里移除, 平均值也被更新. 我们通过实现add, remove和结构体里面的average方法做这个, 如代码 17-2:
+
+文件名: src/lib.rs
+#+begin_src rust
+pub struct AveragedCollection {
+    list: Vec<i32>,
+    average: f64,
+}
+
+impl AveragedCollection {
+    pub fn add(&mut self, value: i32) {
+        self.list.push(value);
+        self.update_average();
+    }
+
+    pub fn remove(&mut self) -> Option<i32> {
+        let result = self.list.pop();
+        match result {
+            Some(value) => {
+                self.update_average();
+                Some(value)
+            }
+            None => None,
+        }
+    }
+
+    pub fn average(&self) -> f64 {
+        self.average
+    }
+
+    fn update_average(&mut self) {
+        let total: i32 = self.list.iter().sum();
+        self.average = total as f64 / self.list.len() as f64;
+    }
+}
+#+end_src
+代码 17-2: 在 AveragedCollection上实现公共方法 add,remove和 average
+
+公共方法add,remove和average是访问或者修改在AveragedCollection实例上的数据的唯一方法. 当一个元素通过add方法被添加到列表里面或者使用remove方法被移除, 每一个的实现也调用处理更新average字段的私有方法 update_avergage.
+
+我们让 list和average字段私有所以没有办法给内部代码直接地添加或者移除元素到list字段; 否则,当list改变的时候average字段可能会变得不同步, 允许内部代码读取average但不能修改它.
+
+因为我们封装了结构体AveragedCollection的实现细节, 我们可以在将来简单的修改一方面, 比如数据结构. 比如, 我们可以给list字段使用一个HashSet<i32>代替Vec<i32>. 和add,remove和average公众方法的签名保持一样, 使用AveragedCollection的代码不需要修改. 如果我们让list公开, 这将因为以下原因变得不可能: HashSet<i32>和 Vec<i32>有不同的添加和删除元素的方法, 所以如果直接修改list内部代码可能必须修改.
+
+如果封装是被考虑为面向对象语言的一个需要的方面, 那么rust满足这种要求. 代码的不同部分使用pub或者不使用的选项或者开启了实现细节的封装.
+
+*** 作为一种类型系统和作为代码共享继承
+继承是一种一个对象可以从其它的对象定义继承的机制, 如此不需要再次定义它们就能得到父对象的数据和行为.
+
+如果一个成为面向对象语言的语言必须有继承, 那么rust不是. 没有办定义一个继承父结构体字段和方法实现的结构体. 然而, 如果在你的程序工具盒里你使用过继承, 在rust里你可以使用其它的方案, 在第一地点根据你搜索继承的原因.
+
+你选择继承出于两个原因. 一个是重用代码: 你可以为一个类型实现部分的行为然后继承让你重用不同类型的实现. 你可以使用默认的特性方法实现共享rust代码, 这就是当我们添加一个在Sumary特性上的summarize方法默认实现你能在代码10-14里看到的. 任何实现了Summary特性的类型将有一个在它之上的summarize方法不需要任何深入的代码. 这就像父类有一个方法的实现然后一个继承的b了类也有该方法的实现. 我们也可以重写继承自父类的summarize方法的默认实现.
+
+另一个原因是使用继承涉及到类型系统: 让一个子类作为父类在相同的地方使用. 这也叫多态, 这意味着如果它们共享特定的特征, 你可以在运行时为每个对象替换多个对象.
+
+#+begin_quote
+多态
+对很多人而言, 多态是继承的同意词. 但实际上它是一个引用到可以和多个类型数据一起工作的更加通用的概念. 于继承而言, 这些类型通常是子类.
+
+rust使用泛型来抽象不同可能的类型和特性边界来加强这些类型必须提供什么的约束. 有时候这叫作边界参数多态性.
+#+end_quote
+
+在很多语言里继承最近不被作为编程设计解决方案所喜爱, 因为它经常伴随着共享比需要的更多代码的风险. 子类不一直共享着它们父类的所有特性, 但是继承一直这么做. 这可能让程序设计缺少灵活性. 它也介绍了在不生效或者因为方法没有应用在子类上导致错误的子类的上的引入方法调用的功能性. 此外, 一些语言将只允许一个子类从一个类继承, 深层次地限制了程序设计的扩展性.
+
+于更多的原因, rust采用不用的方法, 使用特性对象代替继承. 让我们看一下在rust里特性对象如何实现多态.
+
+** 使用允许不同类型的值的特征对象
+在第8章, 我们提到向量的一个限制是它们可以保存任何类型的元素. 我们在代码8-10我们定义一个保存整数, 小数, 和文本的变量的SpreadShellCell枚举里的地方创建一个解决方案.  意味着我们可以在不同的房间保存类型的不同类型然后仍然有一个代码房间一行的向量. 当我们交互的元素是当我们的代码被编译时我们已知的类型的固定集合这是一个完美的好方案.
+
+然而, 有时我们想要我们的库用户可以扩展在部分解决方案下有效的类型的集合. 展示我们如何实现这个, 我们将创建一个示例的图形用户界面工具迭代元素的一个列表, 给每个元素调用drow方法来把它绘到屏幕上--GUI工具通用的技术. 我们将创建一个包含Gui库的结构的叫gui的crate. 这个crate可能包含一些给人用的类型, 比如 Button或者TextField. 此外,gui用户将想要创建他们自己的可以画的类型: 比如, 一个程序员可能添加一个Image而且其它可能添加一个SelctBox.
+
+这个例子里我们不将实现一个完整成熟的gui库, 但是将展示部件如何组到一起. 在写库的时间, 我们不可能知道然后定义所有其它程序员可能想要创建的类型. 但是我们知道gui需要跟踪不同类型的很多值,然后它需要在这个不同类型的值的每个上面调用一个drow方法. 它不需要准确地知道当我们调用drow方法时将发生什么, 只需要知道对于我们的调用那个值将有那个有效方法.
+
+在一个有继承的语言实现这个, 我们可能定义一个叫Component的类在它上面有一个叫drow的方法. 另外的类, 比如Button, Image和SelectBox,将从Component继承然后如此继承draw方法. 他们可以每个重写drow方法来定义他们的自定义行为. 但是框架把他们所有的类型当作好像它们是Compoent实例, 然后在它们上面调用 drow方法. 但国为rust没有继承, 我们需要另外的方法来组织gui库来允许用户使用新类型扩展它.
+
+*** 给通用行为定义一个特征
+实现我们想要gui有的行为, 我们定义一个叫Draw的特性有一个叫draw的方法. 然后我们定义一个获取一个特性对象的向量. 一个特性对象指针指向一个实现我们指定特性的类型的实例和用来看运行时在那个类型上的方法的表. 我们通过指定一些指针的顺序创建一个特性对象, 比如 一个 & 引用或者一个Box<T>智能指针, 然后dyn关键字, 然后指定关联的特性(我们在19章将讨论特性对象必须使用一个指针的原因"动态尺寸类型和Sized特征")我们在一个泛型的地方或者具体类型使用特性对象. 不管哪里我们使用一个特征对象, rust的类型系统确保运行时在那个上下文里的任何值将实现特征对象的特征. 所以, 我们不需要知道编译时所有可能的类型.
+
+在rust里我们被 ,提及我们避免调用结构体和枚举对象来区别于其它语言的对象. 在一个结构体或者枚举里, 在结构体字段j城的数据和在impl块里的行为被分开, 然而在其它语言里, 组合在一个概念里的数据和行为经常被标记为对象. 然而, 特征对象更像在其它语言里他们组合数据和行为的场景里的对象. 但是特征对象和传统对象不同, 我们不能添加数据到一个特性对象里. 特征对象不经常用于其它语言里的对象: 他们指定的意图是允许跨通用行为抽象.
+
+代码 17-3 展示了如何定义一个有一个叫drawo方法的叫Draw的特性对象:
+
+文件名: src/lib.rs
+#+begin_src rust
+pub trait Draw {
+    fn draw(&self);
+}
+#+end_src
+代码17-4: 定义一个有一components字段保存实现Draw特征的特性对象的向量的Screen结构体
+
+在Screen结构体上, 我们定义一个叫run的方法将在每个它的components上调用draw方法, 如代码17-5:
+
+文件名: src/lib.rs
+#+begin_src rust
+pub trait Draw {
+    fn draw(&self);
+}
+
+pub struct Screen {
+    pub components: Vec<Box<dyn Draw>>,
+}
+
+impl Screen {
+    pub fn run(&self) {
+        for component in self.components.iter() {
+            component.draw();
+        }
+    }
+}
+#+end_src
+代码 17-5: 一个在每个组件上调用draw方法的Screen上的run方法
+
+这运作得和定义一个使用有特征边界的泛型参数的结构体不同. 一个泛型参数只可以在一个时间取代一个具体类型, 然而特征对象允许多个具体类型在运行时填充到特征对象里. 比如, 我们可以使用泛型类型定义Sreen结构体然后一个特征边界如代码17-6:
+
+文件名: src/lib.rs
+#+begin_src rust
+pub trait Draw {
+    fn draw(&self);
+}
+
+pub struct Screen<T: Draw> {
+    pub components: Vec<T>,
+}
+
+impl<T> Screen<T>
+where
+    T: Draw,
+{
+    pub fn run(&self) {
+        for component in self.components.iter() {
+            component.draw();
+        }
+    }
+}
+#+end_src
+代码 17-6: 一个Screen结构体的随意实现和使用泛型和特征边界的run方法
+
+这限制我们使用一个Screen实例有很多的类型Button的所有组件或者类型TextField的所有组件. 如果你只有同质的集合, 使用泛型和特征边界很完美, 因为定义在编译时被单一化来使用具体类型.
+
+另一方面, 有了使用特征对象的方法, 一个Screen实例可以保存一个包含一个Box<Button>和一个Box<TextField>的Vec<T>. 让我们看一下这里如何运作, 然后我们将讨论运行时性能影响.
+
+*** 实现特征
+现在我们将添加一些实现Draw特征的类型. 我们将提供Button类型. 再次实际地实现一个GUI库超过了本章的范围, 所以draw方法在它的函数体里没有任何有用的实现. 想象一下实现可能看起来像什么. 一个Button结构体可能一如width, height和label一样的字段, 如代码17-7:
+
+文件名: src/lib.rs
+#+begin_src rust
+pub trait Draw {
+    fn draw(&self);
+}
+
+pub struct Screen {
+    pub components: Vec<Box<dyn Draw>>,
+}
+
+impl Screen {
+    pub fn run(&self) {
+        for component in self.components.iter() {
+            component.draw();
+        }
+    }
+}
+
+pub struct Button {
+    pub width: u32,
+    pub height: u32,
+    pub label: String,
+}
+
+impl Draw for Button {
+    fn draw(&self) {
+        // code to actually draw a button
+    }
+}
+#+end_src
+代码 17-7: 一个实现Draw特征的Button结构体
+
+Button里的width, height和label字段将区别于其它组件里的字段, 比如一个 TextField类型, 可能有这些字段加一个placeholder字段. 我们想要绘到屏幕上的每个类型将实现Draw特征, 但将使用在draw里使用不同的代码来绘制特定的类型, 比如 Button在这里有(没有实际的GUI代码, 这超出了本章的范围). Button类型,比如, 可能有一个额外包含方法的的impl块来关联到当一个用户点击按钮时发生了什么. 这些类型的方法将不应用到像TextField的类型.
+
+如果使用我们库的某人决定实现一个有width,height和options字段的Select结检体,  他们也实现在SelectBox类型上的Draw特征,如代码17-8:
+
+文件名: src/main.rs
+#+begin_src rust
+use gui::Draw;
+
+struct SelectBox {
+    width: u32,
+    height: u32,
+    options: Vec<String>,
+}
+
+impl Draw for SelectBox {
+    fn draw(&self) {
+        // code to actually draw a select box
+    }
+}
+
+fn main() {}
+#+end_src
+代码 17-8: 另一个使用gui的crate实现在SelectBox结构体上的Draw特征
+
+我们库的用户现在写他们的main函数来创建一个Sreen实例. 对于Screen实例, 我们通过把每个放到一个Box<T>添加一个SelectBox和一个Button来成为一个特征对象. 然后他们可以调用Screen实例上的run方法, 这将在每个组件上调用draw. 代码 17-9 展示了这个实现:
+
+文件名: src/main.rs
+#+begin_src rust
+use gui::Draw;
+
+struct SelectBox {
+    width: u32,
+    height: u32,
+    options: Vec<String>,
+}
+
+impl Draw for SelectBox {
+    fn draw(&self) {
+        // code to actually draw a select box
+    }
+}
+
+use gui::{Button, Screen};
+
+fn main() {
+    let screen = Screen {
+        components: vec![
+            Box::new(SelectBox {
+                width: 75,
+                height: 10,
+                options: vec![
+                    String::from("Yes"),
+                    String::from("Maybe"),
+                    String::from("No"),
+                ],
+            }),
+            Box::new(Button {
+                width: 50,
+                height: 10,
+                label: String::from("OK"),
+            }),
+        ],
+    };
+
+    screen.run();
+}
+#+end_src
+代码 17-9: 使用特征对象保存实现相同特征的不同类型的值
+
+当我们写一个库. 我们不知道某人可能添加 SelectBox类型, 但是我们Screen的实现可以在新类型上操作和绘制它, 因为SelectBox实现Draw特征, 这意味着这实现了draw方法.
+
+这个概念--只关心一个值响应的消息而不是值的具体类型--和在动态类型语言里的鸭子类型的概念相似: 如果它走起来像一只鸭子然后叫起来像一只鸭子, 那它必然是一个鸭子! 在代码17-5里Screen上的run的实现, run不需要知道每个组件的类休类型是什么. 它不检查一个组件是否是一个Button或者一个SelectBox的实例, 它只调用在组件上的draw方法. 通过指定Box<dyn Draw>为在componets向呈里值的类型, 我们定义Screen来获取我们可以调用draw方法上的值.
+
+使用特征对象和rust类型系统来使用鸭子类型写相似的代码的优点是我们从来不需要检查一个值在运行时是否实现一个特定的方法或者担心如果一个值没有实现一个方法但是我们任何调用它而产生的错误. 如果值没有实现特征对象需要的特征rust将不编译我们的代码.
+
+比如, 代码 17-10里展示了如果我们尝试创建一个带有一个String作为一个组件的Screen将发生什么:
+
+文件名: src/main.rs
+#+begin_src rust
+use gui::Screen;
+
+fn main() {
+    let screen = Screen {
+        components: vec![Box::new(String::from("Hi"))],
+    };
+
+    screen.run();
+}
+#+end_src
+代码 17-10: 尝试使用没有实现特征对象的特征的类型
+
+我们将得到这个错误, 因为String没有实现Draw特征:
+#+begin_src shell
+$ cargo run
+   Compiling gui v0.1.0 (file:///projects/gui)
+error[E0277]: the trait bound `String: Draw` is not satisfied
+ --> src/main.rs:5:26
+  |
+5 |         components: vec![Box::new(String::from("Hi"))],
+  |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `Draw` is not implemented for `String`
+  |
+  = note: required for the cast to the object type `dyn Draw`
+
+For more information about this error, try `rustc --explain E0277`.
+error: could not compile `gui` due to previous error
+#+end_src
+
+这个错误让我们知道我们传递一些东西到Screen我们没有意味去传递而且我们应该传递一个不同的类型或者我们将在String里实现Draw然后Screen可以在它上面调用draw.
+
+*** 特征对象执行动态调度
+当我们在泛型上使用特征边界回顾在第10章的"使用泛型的代码的性能"里我们在单一处理器被编译器执行的讨论: 编译器生成函数和每个我们在泛型参数里使用的具体类型的非泛型实现. 单一的结果的代码是静态分配, 这是当编译器知道在运行时你将调用什么方法. 这和动态高度相反, 它是当编译器不在编译时区分你将调用哪个方法. 在动态调度的场景里, 编译器生成运行时将被计算哪个方法调用的代码.
+
+当我们使用特征对象, rust必须使用动态调度. 编译器不知道可能被使用的被特征对象使用的代码的所有类型, 所以它不知道哪个函数实现在哪个类型调用上. 而是,在运行时, rust使用在特征对象内部的指针来知道哪个方法来调用. 当这种现象发生的时候有运行时开销, 静态调用不会发生. 动态调用也阻止了编译器选择把方法的函数编译成行内代码, 这反过来阻止一些优化. 然而, 我们确实得到在我们写在wadc17-5里的代码里的扩展性而且我们可以在17-19里提供, 所以这是一个值得考虑的权衡.
+
+*** 特征对象要求对象安全
+你只可以创建一个对象安全的特征到一个特征对象里. 一些复杂的规则管理所有的让一个特征对象安全的属性, 但在实践中,只有两条规则相关. 如果所有方法被定义在有如下属性的特征里, 一个特征是一个对象安全的
++ 返回值不是Self
++ 没有泛型参数
+
+  Self关键字是我们将要实现的特征或者方法里的类型的一个别名. 特征对象必须是对象安全的因为一旦你有一个特征对象, rust不再知道实现那个特征的具体的类型. 如果一个特征方法返回一个具体的Self类型, 但是一个特征对象忘记Self是什么额外的类型, 没有办法可以使用原始的具体类型. 相同是的当特征对象被使用时填充具体类型参数的泛型参数: 具体类型变成实现特征的类型的一部分. 当使用一个特征对象的类型被忘记, 没办法知道什么类型应该被填到泛型参数里面.
+
+  特征对象的一个例子这些方法不是对象安全的是标准库的Clone特征. 在Clone特征里的clone方法的签名像这样:
+#+begin_src rust
+#![allow(unused)]
+fn main() {
+    pub trait Clone {
+        fn clone(&self) -> Self;
+    }
+}
+#+end_src
+String类型实现Clone特征, 当我们在一个String实例上调用clone方法,我们得到一个String的实例. 相似地, 如果我们在一个Vec<T>实现上调用clone方法, 我们得到一个Vec<T>的实例. clone的签名需要知道Self是什么类型, 因为那是返回类型.
+
+编译器将推断当你尝试在特征对象上做一些违反对象安全的规则的事情时. 比如, 我们尝试实现在wadc17-4里的Screen结构体来保存实现Clone特征的类型而不是Draw特性, 像这样:
+#+begin_src rust
+pub struct Screen {
+    pub components: Vec<Box<dyn Clone>>,
+}
+#+end_src
+
+我们将得到这个错误:
+#+begin_src shell
+$ cargo build
+   Compiling gui v0.1.0 (file:///projects/gui)
+error[E0038]: the trait `Clone` cannot be made into an object
+ --> src/lib.rs:2:29
+  |
+2 |     pub components: Vec<Box<dyn Clone>>,
+  |                             ^^^^^^^^^ `Clone` cannot be made into an object
+  |
+  = note: the trait cannot be made into an object because it requires `Self: Sized`
+  = note: for a trait to be "object safe" it needs to allow building a vtable to allow the call to be resolvable dynamically; for more information visit <https://doc.rust-lang.org/reference/items/traits.html#object-safety>
+
+For more information about this error, try `rustc --explain E0038`.
+error: could not compile `gui` due to previous error
+#+end_src
+
+这个错误意味着你不能用这种方式使用这个特征为特征对象. 如果你对对象安全的细节感兴趣, 查看 [[https://github.com/rust-lang/rfcs/blob/master/text/0255-object-safety.md][Rust RFC 255]] 或者参数在 Rust引用里的对象安全.
+
+** 实现一个面向对象设计模式
+状态模式是一个面向对象设计模式. 模式的关键是一个值有一些内部的状态, 它表现为一组状态对象, 根据内部的状态值和行为不同. 状态对象共享的功能: 在rust里, 当然, 我们使用结构体和特征而不是对象和继承. 当它应该改变到内部状态的时候每个状态对象响应它自己拥有的行为和管理. 保存一个状态对象的值不知道状态的不同行为或者什么时候去在状态间转换.
+
+使用状态模式意味着当业务要求程序修改, 我们不需要修改保存状态的值的代码或者使用值的代码. 我们只需要修改在一个状态对象里的代码来改变它的规则或者也许添加一些状态对象. 让我们看一个状态设计模式的例子和在rust里如何使用它.
+
+我们将以递增的方式实现一个博客发布流程. 博客的最终功能将看起来像这样:
+1. 一个博客文章以一个空草稿开始
+2. 当草稿写完, 需要文章的检查
+3. 当文章被认可时, 它也被发布了
+4. 只有发布的文章返回内容来输出, 所以不被认可的文章不能偶然地被发布
+
+   在一个文章上的其它修改尝试将无效. 比如, 在我们被要求重审前,如果我们尝试认可一个草稿文章, 文章应该保留一个末发布的草稿.
+
+   代码17-11以代码的形式展示了这个流程: 这是一个使用我们将实现到一个叫blog的库里的API的例子. 这还编译不过, 因为我们两袖清风没有实现blog库
+
+   文件名: src/main.rs
+#+begin_src rust
+use blog::Post;
+
+fn main() {
+    let mut post = Post::new();
+
+    post.add_text("I ate a salad for lunch today");
+    assert_eq!("", post.content());
+
+    post.request_review();
+    assert_eq!("", post.content());
+
+    post.approve();
+    assert_eq!("I ate a salad for lunch today", post.content());
+}
+#+end_src
+代码17-11: 展示我们想要我们的blog库有的行为的代码
+
+我们想要允许用户使用Post::new创建一个新的草稿博客. 然后当它在草稿状态我们想要允许可以添加到博客里. 如果我们尝试立即获取文章的内容, 在审核前, 啥也不发生, 因为文章还只是一个草稿. 我们在代码里添加  assert_eq!来展示意图. 给这个做的一个优秀的单元测试将假设一个草稿博客从content方法返回一个空字符串, 但是我们不打算给这个例子写测试.
+
+下面, 我们想要给博客的视图添加一个请求, 然后当等待视图的时候我们希望content返回一个空字符串. 当文章接收到审核, 它将被发布, 意味着当content被调用的时候文章的文本将被返回.
+
+注意, 我们和来自crate交互的唯一类型是Post类型. 这个类型将使用状态模式然后保存一个响应多种变化的三个状态中的一个值, 一个文章的状态可以是草稿中, 等待视图或者是已发布. 从一个状态切换到另一个将被内部的Post类型管理. 给方法的响应的状态修改在Post实例上被我们的库用户调用, 它是他们不直接管理状态改变. 用户也不会发生一个像被伸核前被发布的状态的错误,
+
+*** 在草稿态定义Post然后创建新实例
+让我们开始库的实现! 我们知道我们需要一个保存一次内容的公共结构体 Post, 所以我们将开始我们结构体的定义和关联公共方法new来创建Post的一个实例, 如代码17-22. 我们将创建一个私有State 特征. 然后Post将在一个Option<T>以叫state的私有字段孤军作战一个Box<dyn State>的特征对象. 你将看到为什么Opiotn<T>是必需的.
+
+文件名: src/lib.rs
+#+begin_src rust
+pub struct Post {
+    state: Option<Box<dyn State>>,
+    content: String,
+}
+
+impl Post {
+    pub fn new() -> Post {
+        Post {
+            state: Some(Box::new(Draft {})),
+            content: String::new(),
+        }
+    }
+}
+
+trait State {}
+
+struct Draft {}
+
+impl State for Draft {}
+#+end_src
+代码 17-22: 定义一个Post结构体和一个创建一个Post实例的new函数, 一个State特征, 和一个Draft结构体
+
+State特征定义被不同的文章状态共享的行为,然后 Draft, PendingReview和Published状态将全部实现State特征. 现在, 特征没有任何方法,然后我们将通过只定义Draft状态开始, 因为这是我们想要一个文章开始的状态.
+
+当我们创建一个新的Post, 我们设置它的state字段为保存一个Box的Some值. 这个Box指向Draft结构体的一个新实例. 这确保了我们创建一个Post的新实例, 它将作为一个草稿开始. 因为Post的state字段是私有的, 没有办法创建一个在其它状态的Post! 在PostNew函数里, 我们设置content字段到一个新的, 空的String.
+
+*** 保存文章内容的文本
+代码17-11展示了我们想要调用的叫add_text的方法, 传递它到一个 &str,这就是之后的添加到博客文章的文本. 我们把这个实现为一个方法而不是作为pub的content字段的暴露. 这意味着我们可以在后面实现一个将控制content字段的代码如何读的方法. add_text方法很直接, 所以让我们添加impl Post块在代码17-13里的实现:
+
+文件名: src/lib.rs
+#+begin_src rust
+pub struct Post {
+    state: Option<Box<dyn State>>,
+    content: String,
+}
+
+impl Post {
+    // --snip--
+    pub fn new() -> Post {
+        Post {
+            state: Some(Box::new(Draft {})),
+            content: String::new(),
+        }
+    }
+
+    pub fn add_text(&mut self, text: &str) {
+        self.content.push_str(text);
+    }
+}
+
+trait State {}
+
+struct Draft {}
+
+impl State for Draft {}
+#+end_src
+代码17-13: 实现 add_text方法来添加文本到一个文章的content
+
+add_text方法接收一个self的读写引用, 因为我们将修改我们要调用的add_text的实现的Post. 当我们在content的String上调用pub_str和传递text参数来添加到被保存的content时. 这里的行为将不依赖于post所在的状态, 所以这不是状态模式的部分. add_text方法了清 和state字段交互, 但这是我们想要提供的行为的一部分.
+
+*** 确保草稿文章的内容是空的
+即使在我们调用add_text和添加一些内容到我们的博客之后, 我们仍然想要content方法返回一个空的字符串切片, 因为文章仍然在草稿状态, 如代码17-11里的第7行. 现在, 让我们将满足这个需求的简单方法实现 content方法: 一直返回一个空字符串切片. 后面一个我们实现修改文章状态让它可以被发布的能力时我们将修改这里. 目前为止, 文章只能在草稿状态, 所以文章的内容一直是空的. 代码17-14展示这个点位实现:
+
+文件名: src/lib.rs
+#+begin_src rust
+pub struct Post {
+    state: Option<Box<dyn State>>,
+    content: String,
+}
+
+impl Post {
+    // --snip--
+    pub fn new() -> Post {
+        Post {
+            state: Some(Box::new(Draft {})),
+            content: String::new(),
+        }
+    }
+
+    pub fn add_text(&mut self, text: &str) {
+        self.content.push_str(text);
+    }
+
+    pub fn content(&self) -> &str {
+        ""
+    }
+}
+
+trait State {}
+
+struct Draft {}
+
+impl State for Draft {}
+#+end_src
+代码 17-14: 添加总是返回空字符串切片的Post上的content方法的一个点位实现
+
+有了这个被添加的content方法, 在代码17-11里第7行以上的所有东西作为内部运作.
+
+*** 请求一个文章修改安的状态的审核
+下面, 我们需要添加一个请求一个文章的审核的功能, 这将修改它的状态为Draft到PendingReview. 代码17-15 展示这里的代码:
+
+文件名: src/lib.rs
+#+begin_src rust
+pub struct Post {
+    state: Option<Box<dyn State>>,
+    content: String,
+}
+
+impl Post {
+    // --snip--
+    pub fn new() -> Post {
+        Post {
+            state: Some(Box::new(Draft {})),
+            content: String::new(),
+        }
+    }
+
+    pub fn add_text(&mut self, text: &str) {
+        self.content.push_str(text);
+    }
+
+    pub fn content(&self) -> &str {
+        ""
+    }
+
+    pub fn request_review(&mut self) {
+        if let Some(s) = self.state.take() {
+            self.state = Some(s.request_review())
+        }
+    }
+}
+
+trait State {
+    fn request_review(self: Box<Self>) -> Box<dyn State>;
+}
+
+struct Draft {}
+
+impl State for Draft {
+    fn request_review(self: Box<Self>) -> Box<dyn State> {
+        Box::new(PendingReview {})
+    }
+}
+
+struct PendingReview {}
+
+impl State for PendingReview {
+    fn request_review(self: Box<Self>) -> Box<dyn State> {
+        self
+    }
+}
+#+end_src
+代码17-15: 实现 Post上的request_view方法和 State特征
+
+我们给Post一个叫request_view的公共方法, 接收一个self的读写引用. 然后我们在Post的当前状态调用一个内部的request_view, 然后这个第二个 request_view 方法消耗当前状态返回新状态.
+
+我们添加request_view方法给State特征; 实现这个特征的所有类型现在将需要实现request_view方法. 注意相对把self, &self或者 &mut self作为方法的第一个参数, 我们使用self::Box<self>. 这个语法意味着方法只有当我们调用一个Box保存的类型时才有效. 这个语法接收Box<Self>的所有权, 让老状态失效所以Post的状态值可以转化到一个新状态.
+
+消耗老状态, request_view 方法需要接收状态值的所有权. 这是Post的state字段使用Option的原因: 我们调用 take方法来让Some值出state字段的范围然后在这里放一个None, 因为rust不让我们在rust有不存在的字段. 这让我们把state值移出Post而不是借用它. 然后我们将设置文章的state值为这个操作的结果.
+
+我们需要临时设置state为None而不是直接地使用像self.state= stelf.state.request_view();类似的代码来获取state值的所有权. 这确保了Post在我们转化它到一个新状态以后不能使用旧状态.
+
+Draft上的 request_view 方法需要返回一个新的装箱的一个PaddingReview结构体的实例, 这表达当一个文章等待一个审核时的状态. PendingReview结构体也实现request_review方法但是没有任何的转化. 相对地, 它返回它自己, 因为当我们请求一个文章已经在PendingReview状态的审核时, 它应该保持在PendingReview状态.
+
+现在我们可以开始看到这个状态模式的优点: Post上的request_view方法都是相同的而不管它的状态值. 每个状态只为它自己的规则负责.
+
+我们将离开Post上的返回一个空字符串切片的content方法, 现在我们有了一个在PendingReview状态和Draft状态的Post, 但是我们想要在PendingReivew状态的相同行为. 代码 17-11 现在运行到第10行!
+
+*** 添加修改内容行为的approve方法
+approve方法和requst_view方法相似: 它设置state到当状态被审核时它应该有的当前状态的值, 如代码17-16:
+
+文件名: src/lib.rs
+#+begin_src rust
+pub struct Post {
+    state: Option<Box<dyn State>>,
+    content: String,
+}
+
+impl Post {
+    // --snip--
+    pub fn new() -> Post {
+        Post {
+            state: Some(Box::new(Draft {})),
+            content: String::new(),
+        }
+    }
+
+    pub fn add_text(&mut self, text: &str) {
+        self.content.push_str(text);
+    }
+
+    pub fn content(&self) -> &str {
+        ""
+    }
+
+    pub fn request_review(&mut self) {
+        if let Some(s) = self.state.take() {
+            self.state = Some(s.request_review())
+        }
+    }
+
+    pub fn approve(&mut self) {
+        if let Some(s) = self.state.take() {
+            self.state = Some(s.approve())
+        }
+    }
+}
+
+trait State {
+    fn request_review(self: Box<Self>) -> Box<dyn State>;
+    fn approve(self: Box<Self>) -> Box<dyn State>;
+}
+
+struct Draft {}
+
+impl State for Draft {
+    // --snip--
+    fn request_review(self: Box<Self>) -> Box<dyn State> {
+        Box::new(PendingReview {})
+    }
+
+    fn approve(self: Box<Self>) -> Box<dyn State> {
+        self
+    }
+}
+
+struct PendingReview {}
+
+impl State for PendingReview {
+    // --snip--
+    fn request_review(self: Box<Self>) -> Box<dyn State> {
+        self
+    }
+
+    fn approve(self: Box<Self>) -> Box<dyn State> {
+        Box::new(Published {})
+    }
+}
+
+struct Published {}
+
+impl State for Published {
+    fn request_review(self: Box<Self>) -> Box<dyn State> {
+        self
+    }
+
+    fn approve(self: Box<Self>) -> Box<dyn State> {
+        self
+    }
+}
+#+end_src
+代码 17-16: 在Post上的approve方法和State特征的实现
+
+我们添加approve方法到State特征上然后添加一个新的实现State的结构体, Published 状态.
+
+和 request_review方法类似, 如果我们调用Draft上的approve方法, 它将无效, 因为这返回Self. 当我们调用 PendingReview上的approve, 它返回一个新的Published结构体的装箱实例.  Published结构体实现State特征, 也实现了request_review方法和approve方法, 它返回它自己, 因为在这些情况下文章应该保持Published状态.
+
+现在, 我们需要更新Post上的content方法: 如果状态是Published, 我们想要返回在文章content字段上的值; 否则, 我们想要返回一个空字符串切片, 如代码 17-17:
+
+文件名: src/lib.rs
+#+begin_src rust
+pub struct Post {
+    state: Option<Box<dyn State>>,
+    content: String,
+}
+
+impl Post {
+    // --snip--
+    pub fn new() -> Post {
+        Post {
+            state: Some(Box::new(Draft {})),
+            content: String::new(),
+        }
+    }
+
+    pub fn add_text(&mut self, text: &str) {
+        self.content.push_str(text);
+    }
+
+    pub fn content(&self) -> &str {
+        self.state.as_ref().unwrap().content(self)
+    }
+    // --snip--
+
+    pub fn request_review(&mut self) {
+        if let Some(s) = self.state.take() {
+            self.state = Some(s.request_review())
+        }
+    }
+
+    pub fn approve(&mut self) {
+        if let Some(s) = self.state.take() {
+            self.state = Some(s.approve())
+        }
+    }
+}
+
+trait State {
+    fn request_review(self: Box<Self>) -> Box<dyn State>;
+    fn approve(self: Box<Self>) -> Box<dyn State>;
+}
+
+struct Draft {}
+
+impl State for Draft {
+    fn request_review(self: Box<Self>) -> Box<dyn State> {
+        Box::new(PendingReview {})
+    }
+
+    fn approve(self: Box<Self>) -> Box<dyn State> {
+        self
+    }
+}
+
+struct PendingReview {}
+
+impl State for PendingReview {
+    fn request_review(self: Box<Self>) -> Box<dyn State> {
+        self
+    }
+
+    fn approve(self: Box<Self>) -> Box<dyn State> {
+        Box::new(Published {})
+    }
+}
+
+struct Published {}
+
+impl State for Published {
+    fn request_review(self: Box<Self>) -> Box<dyn State> {
+        self
+    }
+
+    fn approve(self: Box<Self>) -> Box<dyn State> {
+        self
+    }
+}
+#+end_src
+代码 17-17: 更新 Post上的content代理State的content方法
+
+因为目标是保持所有这些规则在实现State的结构体内部, 我们调用在state里的值上的content方法作为一个参数传递文章实例(就是self).
+
+我们调用Option上的as_ref方法, 因为我们想要一个Option内部值的引用而不是值的所有权. 因为state是一个Option<Box<dyn State>>, 当我们调用as_ref, 一个Option<&Box<dyn State>>被返回. 如果我们调用 as_ref, 我们将得到一个错误, 因为我们不能从函数参数的 &self借用移出state.
+
+然后我们调用 unwrap方法, 我们知道这将恐慌, 因为我们知道当这些方法完成的时候Post上的方法保证state将一直包含一个Some值. 这是我们讨论过的第9章的"你有比编译器更新的消息的场景"的情况的一种, 当我们知道None值永远不可能时, 尽管编译器不可能知道.
+
+这点上, 当我们调用 &Box<dyn State>上的content, 解引用规则将在& 和Box上生效, 所以content方法将在实现State特性的类型上最终被调用. 那意味着我们需要添加content到State特征的定义, 然后那是我们放置哪个内容用来返回依靠我们在哪个状态的地方, 如代码 17-18:
+
+文件名: src/lib.rs
+#+begin_src rust
+pub struct Post {
+    state: Option<Box<dyn State>>,
+    content: String,
+}
+
+impl Post {
+    pub fn new() -> Post {
+        Post {
+            state: Some(Box::new(Draft {})),
+            content: String::new(),
+        }
+    }
+
+    pub fn add_text(&mut self, text: &str) {
+        self.content.push_str(text);
+    }
+
+    pub fn content(&self) -> &str {
+        self.state.as_ref().unwrap().content(self)
+    }
+
+    pub fn request_review(&mut self) {
+        if let Some(s) = self.state.take() {
+            self.state = Some(s.request_review())
+        }
+    }
+
+    pub fn approve(&mut self) {
+        if let Some(s) = self.state.take() {
+            self.state = Some(s.approve())
+        }
+    }
+}
+
+trait State {
+    // --snip--
+    fn request_review(self: Box<Self>) -> Box<dyn State>;
+    fn approve(self: Box<Self>) -> Box<dyn State>;
+
+    fn content<'a>(&self, post: &'a Post) -> &'a str {
+        ""
+    }
+}
+
+// --snip--
+
+struct Draft {}
+
+impl State for Draft {
+    fn request_review(self: Box<Self>) -> Box<dyn State> {
+        Box::new(PendingReview {})
+    }
+
+    fn approve(self: Box<Self>) -> Box<dyn State> {
+        self
+    }
+}
+
+struct PendingReview {}
+
+impl State for PendingReview {
+    fn request_review(self: Box<Self>) -> Box<dyn State> {
+        self
+    }
+
+    fn approve(self: Box<Self>) -> Box<dyn State> {
+        Box::new(Published {})
+    }
+}
+
+struct Published {}
+
+impl State for Published {
+    // --snip--
+    fn request_review(self: Box<Self>) -> Box<dyn State> {
+        self
+    }
+
+    fn approve(self: Box<Self>) -> Box<dyn State> {
+        self
+    }
+
+    fn content<'a>(&self, post: &'a Post) -> &'a str {
+        &post.content
+    }
+}
+#+end_src
+代码 17-18: 添加content方法到State特征
+
+我们添加返回一个空字符串切片的content方法的默认实现. 那意味着我们不需要实现Draft和PendingReview结构体上的content. Published结构体将重写content方法然后返回post.content里的值.
+
+注意在这个方法上我们需要生命周期申明, 就像我们在第10章讨论的. 我们接收一个到post的引用作为一个参数然后返回那个post的部分引用, 所以返回的引用的生命周期关联到post参数的生命周期.
+
+然后我们结束了, 所有17-11,现在运作! 我们使用博客发布流程实现了状态模式. 关联到规则的逻辑存在于状态对象而不是始终分散在Post里
+
+*** 状态模式的权衡
+我们展示了rust可以实现面向对象状态模式来封装一个文章应该在不同状态的不同种类的行为. Post上的方法不知道各种行为. 我们组织代码的方式, 我们只在一个知道为同被发布的不同方式的地方: Published结构体上的State特征的实现.
+
+如果我们想要创建不使用状态模式的任意实现, 我们可能使用Post上的方法里的match表达式或者甚至在检查文章状态和在这些地方的行为的main代码里. 那将意味着我们必须去看几个地言来理解一个文章进入发布状态的所有影响! 这将只增加我们添加的状态: 这些match表达式的每一个需要其它的手臂.
+
+有了状态模式, Post方法和我们使用Post的地方不需要match表达式, 添加一个新的状态, 我们只需要添加一个新的结构体然后实现在那个结构体里的特征方法.
+
+使用状态模式的实现易于扩展更多的功能. 看使用维护状态模式的代码的简单性, 尝试一下这些建议:
++ 添加一个从PendingReview返回到Draft的修改文章主夶的reject方法
++ 在状态将被改为Published前获取两次approve的调用
++ 只有当一个文章在Draft状态才允许用户添加文本. 提示: 让状态对象响应什么可能修改内容而不响应修改Post.
+
+  状态模式的一个缺点是, 因为状态模式实现在多个状态间, 一些状态和其它状态成对. 如果我们在 PengingReview和Published之间添加其它状态, 比如 Scheduled, 我们将必须修改在PendingReview里的代码来转换为Scheduled, 如果PendingReview不需要修改为一个新的状态符加这将需要更少的工作, 但是那意味着切换到了其它的设计模式.
+
+  另一个缺点是我们重复了一些逻辑. 为了消除一些重复, 我们可能尝试修改在返回self的State特征里的request_review和approve方法的默认实现; 然而, 这将违反对象安全, 因为特征不知道具体的self将会是什么. 我们想要把State作用一个特征对象来使用, 所以我们需要它的方法对象安全.
+
+  其它的重复包括Post上的request_review和approve的相似实现. 两个方法都代理了Option的state字段里的值的相似方法的实现和设置state字段的新值为结果. 如果我们有很多允许这个模式的Post上的方法, 我们可能考虑定义一个宏来消除重复(看19章"宏"的章节).
+
+  通过实现精确的状态模式就像它被定义在面相对象语言里的, 我们没有获取完整的rust也可以的优点. 让我们看一下我们可以在可以让状态非法和导致编译错误的blog库上做的一些修改.
+
+  
+*** 编码状态和行为为类型
+我们将展示你如何重新思考状态模式来得到一种不同的权衡的集合. 相比于封装状态然后完整的过度以让外部代码不知道它们, 我们将编译状态到不同的类型. 一至地, rust的类型检查系统将阻止尝试使用草稿, 只有发布了的博客才被导致一个编译错误允许.
+
+让我们考虑一下在代码 17-11里的main函数的第一部分:
+
+文件名: src/main.rs
+#+begin_src rust
+use blog::Post;
+
+fn main() {
+    let mut post = Post::new();
+
+    post.add_text("I ate a salad for lunch today");
+    assert_eq!("", post.content());
+
+    post.request_review();
+    assert_eq!("", post.content());
+
+    post.approve();
+    assert_eq!("I ate a salad for lunch today", post.content());
+}
+#+end_src
+
+我们仍然使用Post::new和添加文本到文章内容的能力启用在草稿状态的新文章的创建. 但相对于在返回一个空串的草稿博客上有一个content方法, 我们创造它让草稿文章没有content方法. 这种方式, 如果我们尝试得到一个草稿文章的内容, 我们将得到一个告诉我们方法不存在的编译错误. 结果是, 在生产阶段不可能突然给我们展示一个草稿文章的内容, 因为那个代码甚至编译不了. 代码17-19 展示了Post结构体和DraftPost结构体的定义, 也有每一个的方法:
+
+文件名: src/lib.rs
+#+begin_src rust
+pub struct Post {
+    content: String,
+}
+
+pub struct DraftPost {
+    content: String,
+}
+
+impl Post {
+    pub fn new() -> DraftPost {
+        DraftPost {
+            content: String::new(),
+        }
+    }
+
+    pub fn content(&self) -> &str {
+        &self.content
+    }
+}
+
+impl DraftPost {
+    pub fn add_text(&mut self, text: &str) {
+        self.content.push_str(text);
+    }
+}
+#+end_src
+代码 17-19: 一个有content方法的Post和没有content方法的DraftPost
+
+Post和DraftPost结构体都有一个私有的content字段保存了博客的文本. 结构体不再有state字段, 因为我们移动状态的编码到结构体的类型. Post结构体将表达一个已发布的文章, 它有一个返回content的content方法.
+
+我们也有 Post::new 函数, 相对于返回Post的实例, 它返回一个DraftPost的实例. 因为content是私有的而且没有任何返回Post的函数, 现在没可能创建一个Post的实例.
+
+ DraftPost结构体有一个add_text方法, 所以我们可以像之前一样添加文本到content, 但是注意DraftPost没有content方法被定义! 所以现在的程序确保所有文章以草稿文章开始, 草稿文章没有它们的可用内容来展示. 任何获取这些限制的尝试都导致一个编译错误.
+
+*** 实现转化到不同类型的转换
+所以我们如何得到一个已发布的文章? 我们想要强制一个草稿文章在它被发布前必须被审核的规则. 一个在审核状态的文章不应该展示任何文本. 让我们添加其它结构体实现这些约束, PendingReviewPost, 定义DraftPost上的request_review方法来返回一个PendingReviewPost, 然后定义一个PendingReviewPost上的approve方法来返回一个Post, 如休17-20:
+
+文件名: src/lib.rs
+#+begin_src rust
+pub struct Post {
+    content: String,
+}
+
+pub struct DraftPost {
+    content: String,
+}
+
+impl Post {
+    pub fn new() -> DraftPost {
+        DraftPost {
+            content: String::new(),
+        }
+    }
+
+    pub fn content(&self) -> &str {
+        &self.content
+    }
+}
+
+impl DraftPost {
+    // --snip--
+    pub fn add_text(&mut self, text: &str) {
+        self.content.push_str(text);
+    }
+
+    pub fn request_review(self) -> PendingReviewPost {
+        PendingReviewPost {
+            content: self.content,
+        }
+    }
+}
+
+pub struct PendingReviewPost {
+    content: String,
+}
+
+impl PendingReviewPost {
+    pub fn approve(self) -> Post {
+        Post {
+            content: self.content,
+        }
+    }
+}
+#+end_src
+代码 17-20: 一个通过调用DrawftPost上的request_review方法和转换一个PendingReviewPost到一个已发布的Post的PendingReviewPost
+
+request_view和approve方法获取self的所有权, 因此分别消耗DrawftPost和PendingReviewPost实例和转化它们到一个PendingReviewPost发一个已发布的Post. 这种方式, 在我们调用它们的request_review之后我们将没有任何挥之不去的 DraftPost等等实例. PendingReviewPost结构体没有一个在定义在它上面的content的方法, 所以尝试读取它的内容导致一个编译错误, 使用DraftPost也一样. 因为得到一个没有一个content方法被定义的已发布的Post实例的唯一方式是调用 DraftPost上的 request_review, 我们现在编码了博客文章工作流到了类型系统.
+
+但我们也需要一些main函数的小修改. request_review和 approve方法返回新的实例而不是修改在它们上调用的结构体, 所以我们需要添加更多的 let post = 虚拟赋值来保存返回的实例. 我们也不能断言草稿和审核的文章的内容是空字符串, 我们也不需要: 我们再也不能编译尝试使用在这些状态下的文章的代码. main里面修改过的代码如代码 17-21:
+
+文件名: src/main.rs
+#+begin_src rust
+use blog::Post;
+
+fn main() {
+    let mut post = Post::new();
+
+    post.add_text("I ate a salad for lunch today");
+
+    let post = post.request_review();
+
+    let post = post.approve();
+
+    assert_eq!("I ate a salad for lunch today", post.content());
+}
+#+end_src
+代码 17-21: main函数使用新的博客文章工作流的实现的修改
+
+我们需要修改main来重新赋值post的修改意味着这个实现再也不退出面向对象状态模式: 状态间的切换再也不完整地封装在Post实现里. 然后, 我们的收获是非法状态现在变得不可能, 因为类型系统和类型查检在编译时发生! 这确保了特定的bug, 比如展示没发布的文章的内容, 将在它们到生产环境前被发现.
+
+尝试对于额外需求的任务,我们在本章开头在blog库里代码17-20后面提到的, 你认为代码的这个版本的设置是什么. 注意一些任何可能在这个设计里已经完成了.
+
+我们看到虽然rust有能力实现面向对象设计模式, 其它模式, 比如编码状态到类型系统, 在rust里也可以. 这些模式有不同的权衡. 然后你们可能很熟悉面向对象模式, 重新思考可能提供收益的rust的功能的优点的问题, 比如阻止一些编译时的bug. 面向对象模式在rust里不总是最佳的方案, 因为特性的功能, 比如面向对象语言没有的所有权.
+
+*** 总结
+读完本章以后不管你认为认识rust是一门面向对象的编程语言, 现在你知道了在rust里你可以使用特征对象获得一些面向对象的功能. 动态分配作为一点性能损失的交换可以给你代码更多的灵活性. 你可以使用这些灵活性实现可以帮助你的代码有维护性的面向对象模式. rust也有其它的特性, 比如面向对象语言没有的所有权. 一个面向对象模式相对于rust的优点不总是最好的方式, 但它是一个可行的选项.
+
+下面, 我们将看一下模式, 这是另一个提供很多灵活性的rust特征. 我们将通过本书简单地看一下但是还看不到完整的能力. 让我们开始吧!
+
+
