@@ -1,0 +1,923 @@
+* 高级特性
+现在, 你已经学习了rust编程语言的最常见的使用部分. 在我们做20章的项目之前, 我们看一些你可能每一会儿跑一次的语言的方面. 你可以把本章当作当你使用rust里当你你遇到任何不知道的时候需要的引用. 在本章里你将学会使用的特性是用于特定的场景. 虽然你可能不经常遇到他们, 我们想要确保你抓住rust提供的所有特性.
+
+本章里,我们将覆盖:
++ 不安全的rust: 如何退出rust的守卫和负责人为地归持这些守卫
++ 高级特性: 关联类型, 默认类型参数, 完整的限定语法, 超类, 和关联到特性的新类型模式
++ 高级类型: 更多关于新类型模式, 类型别名, 更新的类型, 动态尺寸类型
++ 高级函数和必包: 函数指针和返回必包
++ 宏: 在编译时定义更多代码的定义代码的方式
+
+  有了这些对所有人来说这是rust特性的全套! 让我们开始!
+
+** 不安全rust
+目前为止我们讨论的所有代码拥有rust的编译时内存安全保障. 然而, rust有一个隐藏在里面的第二种语言, 不强制这些内存安全保障: 它被叫作不安全的rust然后像常规rust一样运作, 但是给我们额外的超级能量.
+
+不安全的rust存在, 因为, 自然地, 静态类型很保守. 当编译器尝试决定代码是否坚持保障规则, 对于拒绝一些有效的而不是接收一些无效的程序很好. 虽然代码可能是可以的, 如果rust编译器没有足够的信息, 它将拒绝代码. 在那些情况下, 你可以使用不安全的代码来告诉编译器, "相信我, 我知道我在做什么"缺点是你得伴随你的危险来使用它: 如果你不正确地使用不安全代码, 因为内存不安全导致的问题, 比如空指针解引用, 可能发生.
+
+rust的不安全代码的另一个原因是潜在的电脑硬件天生地不安全. 如果rust不让你进行不安全的操作, 你不能做特定的任务. rust需要允许你做低级别的系统编程, 比如直接和操作系统交互或者甚至编写你自己的操作系统. 使用低级别系统编程是语言的目标之一. 让我们解释为使用不安全的rust我们可以做什么和如何如做.
+
+*** 不安全的超能
+切换到不安全rust, 使用 unsafe关键字然后开始一个保存不安全代码的新块. 在不安全rust里你可以进行5种操作, 调用你不能在安全rust里的不安全的超级操作, 这些超级操作包括的能力有:
++ 解引用一个原始指针
++ 调用不安全的函数或者方法
++ 访问或者修改可读写的静态变量
++ 实现不安全的特性
++ 访问 unios的字段
+  理解unsafe不关掉借用检查或者禁用其它任何的rust的安全查检很重要: 如果你在不安全代码里使用一个引用, 它也将被检查.unsafe关键字只是让你访问这五个特性. 你仍然可以获得一些在不安全块里的相同级别.
+
+  额外的, unsafe不意味着在里面的代码必须很危险或者将最终导致内存安全问题: 意图是作为程序员, 你将确保unsafe块里面的代码将以一种合法的方式访问内存.
+
+  人总是容易犯错的, 错误可能发生, 但是通过要求这五种不安全的操作在使用unsafe的块里面, 你将知道任何与内存安全关联的错误肯定在unsafe块里面. 让unsafe足够小; 当你调查一个内存bug的时候你可能会感激它.
+
+  尽可能的隔离不安全的代码, 最好封装不安全的代码到一个安全的抽象和提供一个安全的API, 当我们执行不安全的函数和方法时这是我们将在本章的后面讨论的. 标准库的一些部分被实现为在已审核的不安全代码上的安全的抽象. 在安全的抽象里包裹不安全的代码防止使用来自查找所有你或者你的用户可能想要使用的以unsafe代码实现的功能的地方, 因为使用安全抽象是安全的.
+
+  反过来看一下五个不安全超级操作的每一个. 我们也将看到一些提供一个安全接口到不安全代码的抽象.
+
+  
+*** 解引用一个原始指针
+在第4章, 在"悬挂指针"一节里, 我们提到编译器确保指针总是有效. 不安全rust有两上新的叫原始指针的类型,和引用相似. 有使用引用一样, 原始指针可以是只读的或者是读写的然后分别可以被写为 *const T和 *mut T. 星号不是解引用操作; 这是类型名称的一部分. 在原始指针的上下文里, 只写意味着那个指针不可以直接赋值给后面的解引用.
+
+引用和智能指针, 原始的指针的区别:
++ 使用只读或者读写指针或者多个指针指向相同地方都允许忽略借用规则
++ 不能保证指向的内存合法
++ 都可以允许为空
++ 不实现任何的自动清理
+  选择退出rust有的这些强制规则,  你可以以更好的性能作为交换或者和其它或者rust的守卫不用就的地方的硬件交互的能力放弃这些安全的保证.
+
+  代码 19-1 展示了如何创建一个只读的和一个读写的来自引用的原始的指针.
+#+begin_src rust
+fn main() {
+    let mut num = 5;
+
+    let r1 = &num as *const i32;
+    let r2 = &mut num as *mut i32;
+}
+#+end_src
+代码 19-1: 创建从引用来的原始指针
+
+注意这个代码里我们没有包括unsafe关键字. 我们在安全代码里创建原始指针; 我们只是不能在不安全块外面解引用原始指针, 如果看到的一点点.
+
+我们使用 as 转化一个只读和一个读写引用来它们的相应的原始指针类型创建了原始指针. 因为我们直接地从引用保证到有效创建它们, 我们知道这些特定的原始指针是有效的, 但我们不能做只有任何原始指针的假设.
+
+下面, 我们创建我们不能如此肯定这些有效性的原始指针. 代码19-2 展示了如何创建原始指针到一个内存的随意位置. 尝试使用随意位置是末定义的: 在那个地址可能有数据或者没有, 编译器可能优化代码让这里没的内存访问, 或者程序可能伴随着段错误出错. 通常, 没有好的原因像这样写代码, 但它是可能的.
+
+#+begin_src rust
+fn main() {
+    let address = 0x012345usize;
+    let r = address as *const i32;
+}
+#+end_src
+代码 19-2: 创建一个原始指针到一个随意的内存地址
+
+回顾我们在安全代码里创建原始指针, 但我们不能解引用原始指针和读被指向的数据. 在代双19-3里, 我们在一个需要unsafe块的原始指针上使用解引用操作 *.
+
+#+begin_src rust
+fn main() {
+    let mut num = 5;
+
+    let r1 = &num as *const i32;
+    let r2 = &mut num as *mut i32;
+
+    unsafe {
+        println!("r1 is: {}", *r1);
+        println!("r2 is: {}", *r2);
+    }
+}
+#+end_src
+代码 19-3: 使用unsafe块解引用原始指针
+
+创建一个无害的指针; 只有当我们尝试访问它可能指向我们可能伴随一个非法值悬挂的值.
+
+也注意在代码19-1和19-3, 我们创建的都指向相同内存的 *const i32和 *mut i32原始指针, num被保存了. 如果我们尝试创建一个只读和一个读写引用到num, 代码将不能编译, 因为rust的借用规则不允许一个读写引用在相同时间作来其它的只读引用.  有了原始指针, 我们可以创建一个读写指针和一个只读指针到相同位置和通过读写指针修改数据, 潜在地创建了数据竞争. 小心!
+
+随着这些危险, 为什么你还使用原始指针? 一个主要的使用场景是当有C代码进行交互, 就像你在下一章看到的,"调用一个不安全函数或者方法"另一个情况是当构建借用规则不懂的安全抽象. 我们将介绍不安全函数然后看一个使用不安全代码的安全抽象的例子.
+
+*** 调用一个不安全函数或者方法
+你二个需要一个不安全块的操作类型是调用不安全函数, 不安全函数和方法直接看起来像常规函数和方法, 但是在剩下的定义里它们有一个额外的unsafe. 这个上下文里的unsafe指出函数要求当我们调用这个函数的时候我们需要坚守, 因为rust不能保证我们满足这些需要. 通过一个unsafe块调用不安全函数, 我们表达我们读过这个函数的文档, 负责坚守函数的协议.
+
+这是一个在它的函数体里不做任何事情的叫dangerous的不安全函数:
+
+#+begin_src rust
+fn main() {
+    unsafe fn dangerous() {}
+
+    unsafe {
+        dangerous();
+    }
+}
+#+end_src
+
+我们必须在一个单独的unsafe块里调用dangerours函数, 如果我们尝试在unsafe块外面尝试调用dangerous函数,我们将得到一个错误:
+#+begin_src rust
+$ cargo run
+   Compiling unsafe-example v0.1.0 (file:///projects/unsafe-example)
+error[E0133]: call to unsafe function is unsafe and requires unsafe function or block
+ --> src/main.rs:4:5
+  |
+4 |     dangerous();
+  |     ^^^^^^^^^^^ call to unsafe function
+  |
+  = note: consult the function's documentation for information on how to avoid undefined behavior
+
+For more information about this error, try `rustc --explain E0133`.
+error: could not compile `unsafe-example` due to previous error
+#+end_src
+
+在我们对dangerous调用的周围插入unsafe块, 我们断言rust我们读过了函数的文档, 我们明白如何正确地使用它, 和我们验证过我们对于函数的签名完全理解.
+
+不安全函数的主体和unsafe块一样有效, 所以在一个不安全函数里可以执行其它的不安全操作, 我们不需要添加其它的unsafe块.
+
+*** 创建一个基于不安全代码的安全抽象
+只因为一个函数包含不安全代码不意味着我们需要标记整个函数为不安全. 事实上, 在安全代码里包裹不安全代码是一种常见的抽象. 作为一个例子, 让我们学一个标准库里的函数, split_at_mut, 这需要一些不安全的代码和解释我们可能如何实现它. 这个安全的方法被定义在读写切片上: 它接收一个切片然后通过作为参数给定的索引切分切片为二. 代码 19-4展示了如何使用split_at_mut.
+
+#+begin_src rust
+fn main() {
+    let mut v = vec![1, 2, 3, 4, 5, 6];
+
+    let r = &mut v[..];
+
+    let (a, b) = r.split_at_mut(3);
+
+    assert_eq!(a, &mut [1, 2, 3]);
+    assert_eq!(b, &mut [4, 5, 6]);
+}
+#+end_src
+代码19-4: 使用安全的 split_at_mut函数
+
+我们不能只使用安全的rust实现这个函数. 一个实现可能像代码19-5, 它不能编译. 简单起见, 我们实现split_at_mut为一个函数而不是一个方法然后只为i32值的切片实现面不是泛型T.
+
+#+begin_src rust
+fn split_at_mut(slice: &mut [i32], mid: usize) -> (&mut [i32], &mut [i32]) {
+    let len = slice.len();
+
+    assert!(mid <= len);
+
+    (&mut slice[..mid], &mut slice[mid..])
+}
+
+fn main() {
+    let mut vector = vec![1, 2, 3, 4, 5, 6];
+    let (left, right) = split_at_mut(&mut vector, 3);
+}
+#+end_src
+代码 19-5: 一个只使用安全rust的 splite_at_mut的实例的尝试
+
+这个函数首先获取切片的整个长度. 然后它断言作为参数给定的索引在被查检的切片里不管它更短或者等于这个长度. 断言意味着如果我们传递一个大于长度的索引到分割切片的地方, 在它尝试使用那个索引前函数将恐慌.
+
+然后我们在一个元组里返回两个读写的切片: 一个来自原始切片的开始到mod索引然后另一个来自mid到切片的结束.
+
+当我们尝试编译在19-5里的代码, 我们得到一个错误.
+#+begin_src shell
+$ cargo run
+   Compiling unsafe-example v0.1.0 (file:///projects/unsafe-example)
+error[E0499]: cannot borrow `*slice` as mutable more than once at a time
+ --> src/main.rs:6:30
+  |
+1 | fn split_at_mut(slice: &mut [i32], mid: usize) -> (&mut [i32], &mut [i32]) {
+  |                        - let's call the lifetime of this reference `'1`
+...
+6 |     (&mut slice[..mid], &mut slice[mid..])
+  |     -------------------------^^^^^--------
+  |     |     |                  |
+  |     |     |                  second mutable borrow occurs here
+  |     |     first mutable borrow occurs here
+  |     returning this value requires that `*slice` is borrowed for `'1`
+
+For more information about this error, try `rustc --explain E0499`.
+error: could not compile `unsafe-example` due to previous error
+#+end_src
+
+rust借用查检器不明白我们借用切片的不同部分; 它只知道我们借用来自相同的切片两次. 借用一个切片不同部分基础上是可以的, 因为两个切片没有重叠. 但是rust不能聪明到知道这个. 当我们知道代码是可以的, 但是rust不知道, 是时候触及不安全代码.
+
+代码19-6展示了如何使用一个unsafe块, 一个原始指针, 和对不安全函数的调用来让split_at_mut的实现工作.
+
+#+begin_src rust
+use std::slice;
+
+fn split_at_mut(slice: &mut [i32], mid: usize) -> (&mut [i32], &mut [i32]) {
+    let len = slice.len();
+    let ptr = slice.as_mut_ptr();
+
+    assert!(mid <= len);
+
+    unsafe {
+        (
+            slice::from_raw_parts_mut(ptr, mid),
+            slice::from_raw_parts_mut(ptr.add(mid), len - mid),
+        )
+    }
+}
+
+fn main() {
+    let mut vector = vec![1, 2, 3, 4, 5, 6];
+    let (left, right) = split_at_mut(&mut vector, 3);
+}
+#+end_src
+代码19-6: 在split_at_mut函数的实现里使用不安全代码
+
+回顾第4章的"切片类型", 切片是对一些数据和切片长度的指针. 我们使用len方法得到一个切片的长度然后 as_mut_prt方法来得到切片的原始指针. 这种情况下, 我们有一个i32值的读写切片, as_mut_ptr返回一个带有 *mut i32类型的原始指针, 我们将它保存在变量ptr里.
+
+我们继续mid索引在slice里的断言. 当我们访问不安全代码时: slice::from_raw_parts_mut函数获取一个原始指针和一个长度, 然后它创建一个切片. 我们创建这个函数创建一个开始于ptr和mid个元素一样长的切片. 然后使用mid作为一个参数调用prt上的add函数来获得一个开始于mid的原始指针, 然后我们创建了一个使用那个指针的切片和保留mid作为长度的元素的数量.
+
+slice::from_raw_parts_mut函数是不安全的, 因为它接收一个原始指针然后必须相信那个指针是有效的. 原始指针上的add方法也是不安全的, 因为它必须相信偏移位置也是一个有效指针. 因此, 我们必须放置一个unsafe块在我们对 slice::from_raw_parts_mut和add的调用周围, 所以我们可以调用它们, 通过看代码和添加mid必须小于或者等于len的断言, 我们可以区分所有在unsafe块里使用的原始指针将是使用切片的数据的有效指针. 这是可接受的和 unsafe的合适用法.
+
+注意我们不需要标记最终的 split_at_mut函数为不安全, 我们可以从安全的rust里调用这个函数, 我们创建了一个以安全的方式使用unsafe代码的函数实现的不安全代码的安全抽象, 因为它只从这个函数访问的数据创建有效的指针.
+
+相比之下, 当切片被使用的时候, 在代码19-7里的slice::from_raw_parts_mut的使用将可能崩溃. 代码接收随意的内存地址然后创建一个10000个元素的切片.
+
+#+begin_src rust
+fn main() {
+    use std::slice;
+
+    let address = 0x01234usize;
+    let r = address as *mut i32;
+
+    let slice: &[i32] = unsafe { slice::from_raw_parts_mut(r, 10000) };
+}
+#+end_src
+代码 19-7: 从一个随意的内存地址创建一个切片
+
+在这个随意的地址我们不拥有内存, 然后也没有这个代码访问的切片包含有效的i32值的保证. 尝试使用slice好像它是有效的导致末定义的行为.
+
+*** 使用内联函数调用内联代码
+有时, 你的rust代码skce需要跟其它语言写的代码交互. 如此, rust有一个关键字, extern, 那个功能的创建和一个外部函数接口(FFI)的使用.  一个FFI是一种编程语言定义函数和使用一个不同的(foreign)编程语言来调用这些函数的方式.
+
+代码19-8 展示了如何设置来自C标准库的abs函数的一体化. 定义在extern块里的函数从rust代码里调用总是不安全的. 原因是其它语言不遵守rust的规则和保证, rust不能查检它们, 所以在程序员的职责来确保安全.
+
+文件名: src/main.rs
+#+begin_src rust
+extern "C" {
+    fn abs(input: i32) -> i32;
+}
+
+fn main() {
+    unsafe {
+        println!("Absolute value of -3 according to C: {}", abs(-3));
+    }
+}
+#+end_src
+代码19-8: 定义和调用定义在其它语言里的一个extern函数
+
+在extern "C"块里面, 我们列出了名字和从其它我们想要调用的语言的内部函数的签名. "C"部分案底外部函数使用哪个应用程序二进制接口(ABI): ABI定义在汇编级别如何调用函数. "C" ABI最常见和跟随C语言的ABI
+
+#+begin_quote
+从其它语言调用rust函数
+
+我们也可以使用extern来创建一个允许其它语言调用rust函数的接口. 相对extern块, 我们添加extern 关键字然后指定只在fn关键字前使用的ABI. 我们也需要添加一个 #[no_mangle]标记来告诉rust编译器不要破坏这个函数的名字. Mangling是当一个编译器修改我们给一个函数的名字为不同的包含给编译过程的其它部分消耗但可读性更差的更多信息的名字. 每个程序语言编译器用不同的方式经微地破坏名字, 所以对于rust函数被其它语言命名, 我们必须禁止rust编译器的名字破坏.
+
+在下面的例子里, 我们让call_from_c函数可以从C代码访问, 在它被编译为一个共享库然后从C链接以后:
+
+#![allow(unused)]
+fn main() {
+	#[no_mangle]
+    pub extern "C" fn call_from_c() {
+    	println!("Just called a Rust function from C!");
+	}
+}
+
+这个extern的用法不需要unsafe
+#+end_quote
+
+*** 访问或者修改一个读写的静态变量
+至到现在, 我们没有讨论全局变量, rust不支持除了rust的所有权规则的问题. 如果两个线程访问相同的读写全部变量, 可能导致数据竞争.
+
+在rust里, 全局变量叫作静态变量. 代码 19-9 展示通过字符串切片作为值一个定义和使用静态变量的例子.
+
+文件名: src/main.rs
+#+begin_src rust
+static HELLO_WORLD: &str = "Hello, world!";
+
+fn main() {
+    println!("name is: {}", HELLO_WORLD);
+}
+#+end_src
+代码 19-9: 定义和使用一个只读静态变量
+
+静态变量和常量类似, 我们在第3章里的"变量和常量的区别"里讨论过. 静态变量的名字习惯上是使用SCREAMING_SNAKE_CASE. 静态变量只使用'static 生命周期保存引用, 这意味着rust编译器可以计算出生命周期和我们不要求明确地申明. 访问一个只读静态变量是安全地.
+
+常量和只读静态变量看起来相似, 但有一点不同在静态变量里的值有一个内存上的固定地址. 使用值将一直访问相同的数据. 常量, 另一方面, 允许复制不管是否使用的他们的数据.
+
+另一个常量和静态变量不同是静态变量可以是读写的. 访问和修改可读写的静态变量是不安全的. 代码19-10, 展示如何定义, 访问和修改一个可读写的叫CONTER的静态变量.
+
+文件名: src/main.rs
+#+begin_src rust
+static mut COUNTER: u32 = 0;
+
+fn add_to_count(inc: u32) {
+    unsafe {
+        COUNTER += inc;
+    }
+}
+
+fn main() {
+    add_to_count(3);
+
+    unsafe {
+        println!("COUNTER: {}", COUNTER);
+    }
+}
+#+end_src
+代码 19-10: 从一个可读写的变量里读和写到一它上面是不安全的
+
+像常规变量一样, 我们使用mut关键字指定读写性. 来自COUNTER的任何读或者写的代码必须在一个unsafe块里面. 这段代码编译然后输出 :COUNTER 3 就像我们期望的一样, 因为它是单线程的. 让多线程访问COUNTER将可能屋数据竞争.
+
+有了全局访问的可读写的数据, 很难保证没有数据竞争, 这是为什么rust认为可写的静态变量不安全的原因. 它可能完全地使用在并发技术里或者线程安全的我们在16章讨论的智能指针里, 所以编译器检查来自不同线程的数据访问是安全的.
+
+*** 实现不安全特性
+另一个unsafe的使用场景是实现一个不安全的特征. 当至少一个它的访问有一些编译器不能验证的常量时一个特征是不安全的. 我们可以定义通过在trait前添加unsafe关键字和也标记特征的实现为unsafe定义特征是不安全的, 如代码19-11.
+#+begin_src rust
+unsafe trait Foo {
+    // methods go here
+}
+
+unsafe impl Foo for i32 {
+    // method implementations go here
+}
+
+fn main() {}
+#+end_src
+代码 19-11: 定义和使用不安全的特性
+
+通过使用 unsafe impl, 我们承诺我们将坚守编译器不能检查的常量.
+
+作为一个例子, 回顾我们在16章里的"使用Sync和Send特性扩展并发"里讨论过的Sync和Send标记特性: 如果我们的类型完整的由Send和Sync类型组成编译器自动地实现这些特性. 如果我们实现一个包含不是Send或者Sync的类型的类型, 比如原始指针, 然后我们想要标记那个类型为Send或者Sync, 我们必须使用unsafe. rust不能验证我们的类型坚持它可以安全地发跨线程发送或者从多个线程访问的保证; 因此, 我们需要手动做这些检查然后用unsafe指出.
+
+*** 访问联合体的字段
+只和unsafe一起工作的最终行为是访问联合体的字段, 一个联合体和struct相似, 但在同一个时间只有一个定义的字段用在特定的实例上. 联合体基本用来和C代码联合的接口. 访问联合字段是不安全的, 因为rust不能保证当前的数据类型被保存在联合体的实例上. 你可以在[[https://doc.rust-lang.org/reference/items/unions.html][引用]]里学习更多的联合体.
+
+*** 什么时候使用不安全代码
+使用unsafe来使用只被讨论的那五个行为的一个(超级操作)不会出错或者甚至.., 但这是正确地得到unsafe代码的开关, 因为编译器不能帮助坚持内存安全. 当你有一个使用unsafe代码的原因时, 你可以这么做, 当问题发生时然后有了明确的unsafe审明让它易于跟踪问题的源头.
+
+** 高级特征
+我们第一个在第10章的"特征: 定义共享的行为"里覆盖特征, 但和生命周期一样, 我们没有讨论更多的细节. 现在你知道关于rust的更多, 我们可以进入细节.
+
+*** 使用关联类型指定在特征定义里的点位类型
+关联类型连接一个类型点位符到一个特征, 在它的签名里那个特性方法的安全可以使用这些点位类型. 一个特征的实现将指定具估的类型用于给特定实现的这个类型的位置. 那样, 我们可以定义一个使用一些至少特征被实现不需要精确知道这些类型是什么的时候的一些类型的特性.
+
+在本章我们描述了最多的高级特性是很少被需要的. 关联类型以某种方式在中间. 他们比在本书的剩下部分解释的特征使用得很少, 但比我们在本章里讨论的其它特性更常见.
+
+使用关联类型的特征的一个例子是标准库提供的Iterator特征. 关联类型叫作Iterm 然后使用在实现了Iterator特征迭代的类型的值的类型上. 在第13章的"Iterator特征和next方法"里, 我们提到Iteractor特征的定义如代码 19-12.
+#+begin_src rust
+pub trait Iterator {
+    type Item;
+
+    fn next(&mut self) -> Option<Self::Item>;
+}
+#+end_src
+代码 19-12: 有一个关联类型Item的Iterator特征的定义
+
+Item类型是一个点位类型, next方法的定义展示了这将返回类型Option<Self::Itmer>的值. Iterator特性的实现将为Item指定具体类型, nextyyif将返回一个包含具体类型值的Option.
+
+关联类型可能概念上看起来像泛型, 后面允许我们定义一个没有指定类型可能处理什么的函数, 所以为什么使用关联类型?
+
+让我们用一个来自13章的实现了在Conter结构体上的Iteractor特征的例子解释两个概念的不同. 在13-21里, 我们指出Item类型是u32:
+文件名: src/lib.rs
+#+begin_src rust
+struct Counter {
+    count: u32,
+}
+
+impl Counter {
+    fn new() -> Counter {
+        Counter { count: 0 }
+    }
+}
+
+impl Iterator for Counter {
+    type Item = u32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // --snip--
+        if self.count < 5 {
+            self.count += 1;
+            Some(self.count)
+        } else {
+            None
+        }
+    }
+}
+#+end_src
+
+这里的语法和泛型的相当. 所以为什么不只使用泛型定义Iteractor特征, 如代码 19-13?
+
+#+begin_src rust
+pub trait Iterator<T> {
+    fn next(&mut self) -> Option<T>;
+}
+#+end_src
+代码 19-13: 一个Iterator特性使用泛型的假想定义
+
+区别是当使用泛型时, 如在代码19-13里,我们必须在每个实现上申明类型; 因为我们可能也为任何其它类型实现 Iteractor<String> for Counter, 我们可以有 给Counter的Iterator的多个实现. 换名话说, 当一个特征有一泛型参数, 它可以多次被实现为一个类型, 每次修改泛型的具体类型. 当我们使用Counter上的mext方法时, 我们必须提供类型申明来表明我们想要使用哪一个Iteractor的实现.
+
+*** 默认泛型参数和操作重载
+当我们定义一个泛型参数, 我们给泛型类型指定默认的具体类型. 如果默认类型工作这消除了指定具体类型的特征的实现的需要. 当定义泛型时这个语法为泛型指定默认类型 <PlaceholderType=ConcrateTyep>.
+
+这个技术用于操作重载的情况的一个很好的例子. 操作符重载是在具体场景下一个操作(比如+)的自定义行为.
+
+rust不允许你创建自己的操作或者重载任意的操作. 但是可以通过实现和操作关联的特征重载列在std::ops里的操作和相应的特征. 比如, 在代码19-14里, 我们重载了+操作来添加一两个Point实例到一起. 我们通过实现在Point结构体里的Add特征做这个.
+
+文件名: src/main.rs
+#+begin_src rust
+jjuse std::ops::Add;
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+impl Add for Point {
+    type Output = Point;
+
+    fn add(self, other: Point) -> Point {
+        Point {
+            x: self.x + other.x,
+            y: self.y + other.y,
+        }
+    }
+}
+
+fn main() {
+    assert_eq!(
+        Point { x: 1, y: 0 } + Point { x: 2, y: 3 },
+        Point { x: 3, y: 3 }
+    );
+}
+#+end_src
+代码 19-14: 给Point实例实现Add特征来重载+操作
+
+Add方法添加两个Point实例的x值和两个实例的y值来创建一个新的Point. Add特征有一个决定类型从add函数返回的类型的叫Output的关联类型.
+
+在这段代码里的默认泛型在Add特征里, 这是它的定义:
+#+begin_src rust
+
+#![allow(unused)]
+fn main() {
+trait Add<Rhs=Self> {
+    type Output;
+
+    fn add(self, rhs: Rhs) -> Self::Output;
+}
+}
+#+end_src
+
+这个代码通常看起来很熟悉: 一个带有一个方法和一个关联类型的特征. 新的部分是Rhs=Self: 这个语法被叫作调用默认类型参数. Rhs泛型参数("right hand side"的简写)定义了在add方法里的rhs参数的类型. 当我们实现Add特征时如果我们不为Rhs指定一个具体类型, Rhs的类型将默认是Self, 这将是我们在Add上实现的类型.
+
+当我们为Point实现Add时, 我们为Rhs使用默认值, 因为我们想要添加两个Point 实例. 让我们看一个在我们想要自定义Rhs类型而不是使用默认的地方实现Add特征的例子.
+
+我们有两个结构体, Millimeters和Meters, 保存在不同单元里的值. 存在于其它类型里的值的这个简单包裹被叫作新类型模式, 我们在"使用新类型来实现扩展类型的扩特征"里详细描述它. 我们想要以毫米和米的值添加值和让Add的实现做正确的转换. 我们可以给Meters作为Rhs给 Millieters实现Add, 如偌19-15.
+
+文件名: src/lib.rs
+#+begin_src rust
+use std::ops::Add;
+
+struct Millimeters(u32);
+struct Meters(u32);
+
+impl Add<Meters> for Millimeters {
+    type Output = Millimeters;
+
+    fn add(self, other: Meters) -> Millimeters {
+        Millimeters(self.0 + (other.0 * 1000))
+    }
+}
+#+end_src
+代码 19-15: 在Millimeters上实现Add特征来添加Mollimeters到 Meters
+
+添加 Millimeters和Meters, 我们指定 impl Add<Meters>来设置Rhs类型参数的值而不是使用默认的Self.
+
+你将以两种主要的方式看到默认类型参数
++ 不破坏现有代码扩展一个类型
++ 在用户不需要的指定场景下允许自定义
+  标准库的Add特征是第二个意图的一个例子. 通常, 你将添加两个相似的类型, 但是Add特征提供了在此之上的自定义的能力. 在Add特征定义里使用一个默认类型参数意味着大多数情况下你不需要指定额外的类型参数. 换句话说, 一点实现样板不需要, 让它易于使用那个特征.
+
+  反过来第一个意图和第二个相似: 如果你想要添加一个类型参数到一个存在的特征, 你可以不用破坏存在的实现代码来给它一个默认类型以允许特性功能的扩展.
+
+*** 消除歧义的完全限定语法: 使用相同的名字调用方法
+在rust里没有什么办法阻止一个特征有和中车个特征里的方法同名的方法, rust也不阻止你实现一个类型的两个特征. 也可能直接地实现在一个和特征里的方法同名的类型上的方法.
+
+当使用相同的名字调用方法, 你需要告诉rust你想要使用哪一个. 考虑在19-16里的代码我们在哪里定义两个特征 Pilot和Wizard,都有一个叫fly的方法. 然后我们实现在一个已经有一个叫fly方法在上它上面的类型Human的两个实现, 每个fly方法做不同的事情.
+
+文件名: src/main.rs
+#+begin_src rust
+trait Pilot {
+    fn fly(&self);
+}
+
+trait Wizard {
+    fn fly(&self);
+}
+
+struct Human;
+
+impl Pilot for Human {
+    fn fly(&self) {
+        println!("This is your captain speaking.");
+    }
+}
+
+impl Wizard for Human {
+    fn fly(&self) {
+        println!("Up!");
+    }
+}
+
+impl Human {
+    fn fly(&self) {
+        println!("*waving arms furiously*");
+    }
+}
+
+fn main() {}
+#+end_src
+代码 19-16: 两个特征被定义为有一个fly方法然后在Human类型上实现, 然后一个fly方法被直接地Human上实现
+
+当我们调用一个Human实例上的fly时, 编译器默认的调用在精工上直接地实现的方法, 如代码 19-17.
+
+文件名: src/main.rs
+#+begin_src rust
+trait Pilot {
+    fn fly(&self);
+}
+
+trait Wizard {
+    fn fly(&self);
+}
+
+struct Human;
+
+impl Pilot for Human {
+    fn fly(&self) {
+        println!("This is your captain speaking.");
+    }
+}
+
+impl Wizard for Human {
+    fn fly(&self) {
+        println!("Up!");
+    }
+}
+
+impl Human {
+    fn fly(&self) {
+        println!("*waving arms furiously*");
+    }
+}
+
+fn main() {
+    let person = Human;
+    person.fly();
+}
+#+end_src
+代码 19-17: 在一个Human实例上调用fly
+
+运行这个代码将输出 \*waving arms furiously*, 说明了rust调用直接在Human上实现的fly方法.
+
+从其它的Pilot特征或者Wizard特性调用fly方法, 我们需要更明确的讲法来指定我们想要的是哪个fly方法. 代码 19-18表明了这个语法.
+
+文件名: src/main.rs
+#+begin_src rust
+trait Pilot {
+    fn fly(&self);
+}
+
+trait Wizard {
+    fn fly(&self);
+}
+
+struct Human;
+
+impl Pilot for Human {
+    fn fly(&self) {
+        println!("This is your captain speaking.");
+    }
+}
+
+impl Wizard for Human {
+    fn fly(&self) {
+        println!("Up!");
+    }
+}
+
+impl Human {
+    fn fly(&self) {
+        println!("*waving arms furiously*");
+    }
+}
+
+fn main() {
+    let person = Human;
+    Pilot::fly(&person);
+    Wizard::fly(&person);
+    person.fly();
+}
+#+end_src
+代码 19-18: 指定我们想要调用的哪个特性的fly方法
+
+在方法名前指定特征名字给rust澄清我们想要调用的是fly的哪个实现. 我们也可以写 Human::fly(&person), 这和我们在19-18里使用过的person.fly()等价, 如果我们不需要区分这写起来有点长.
+
+运行这段代码输出如下:
+#+begin_src shell
+$ cargo run
+   Compiling traits-example v0.1.0 (file:///projects/traits-example)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.46s
+     Running `target/debug/traits-example`
+This is your captain speaking.
+Up!
+*waving arms furiously*
+#+end_src
+
+因为fly方法接收一个self参数, 如果我们有两个都实现了一个特征的类型, rust可以根据self的类型计算出特征的哪个实现用来使用.
+
+然而, 作为特征一部分的关联的函数没有self参数. 当在相同的作用域里两个类型实现那个特征, 除非你使用完全限定语法, rust不能计算出你想要的是哪个类型. 比如, 在19-19里的Animal特征有一个关联函数 baby_name, 给结构体Dog的Animial的实现,和关联的函数baby_name直接定义在Dog上.
+
+文件名: src/main.rs
+#+begin_src rust
+trait Animal {
+    fn baby_name() -> String;
+}
+
+struct Dog;
+
+impl Dog {
+    fn baby_name() -> String {
+        String::from("Spot")
+    }
+}
+
+impl Animal for Dog {
+    fn baby_name() -> String {
+        String::from("puppy")
+    }
+}
+
+fn main() {
+    println!("A baby dog is called a {}", Dog::baby_name());
+}
+#+end_src
+代码19-19: 使用关联函数的特征和也实现那个特征的有相同名字的关联函数的类型
+
+这段代码是给想要命名所有的小狗的动物笼子用的, 它被定义在Dog上的baby_name关联函数所实现. Dog类型也实例了
+Animal特征, 这描述了所有动物有的特性. 小狗被叫作puppies, 它被有Animal特征上的关联函数baby_name里的Dog上的Animal特征的实现所表达.
+
+在main里, 我们调用Dog::baby_name函数, 这直接调用了定义在Dog上的关联函数, 这段代码如下输出:
+#+begin_src rust
+$ cargo run
+   Compiling traits-example v0.1.0 (file:///projects/traits-example)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.54s
+     Running `target/debug/traits-example`
+A baby dog is called a Spot
+#+end_src
+
+这个输出不是我们想要的, 我们想要调用作为我们在Dog上实现的Animal一分部的baby_name函数, 所以代码输出 A baby dog is called a pully, 指定我们在19-18里使用的特征名字的技术在这里不能帮助我们; 如果我们修改在19-20里的代码, 我们将得到一个编译错误.
+
+文件名: src/main.rs
+#+begin_src rust
+trait Animal {
+    fn baby_name() -> String;
+}
+
+struct Dog;
+
+impl Dog {
+    fn baby_name() -> String {
+        String::from("Spot")
+    }
+}
+
+impl Animal for Dog {
+    fn baby_name() -> String {
+        String::from("puppy")
+    }
+}
+
+fn main() {
+    println!("A baby dog is called a {}", Animal::baby_name());
+}
+#+end_src
+代码 19-20: 尝试调用来自Animal的baby_name函数, 但是rust不知道使用哪个实现
+
+因为 Animal::baby_name是一个关联函数而不是一个方法, 而且这里没有self参数, 这里rust不能计算出我们想要的Animal::baby_name是哪个实现. 我们将得到这个编译错误:
+
+#+begin_src rust
+$ cargo run
+   Compiling traits-example v0.1.0 (file:///projects/traits-example)
+error[E0283]: type annotations needed
+  --> src/main.rs:20:43
+   |
+20 |     println!("A baby dog is called a {}", Animal::baby_name());
+   |                                           ^^^^^^^^^^^^^^^^^ cannot infer type
+   |
+   = note: cannot satisfy `_: Animal`
+note: required by `Animal::baby_name`
+  --> src/main.rs:2:5
+   |
+2  |     fn baby_name() -> String;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+For more information about this error, try `rustc --explain E0283`.
+error: could not compile `traits-example` due to previous error
+#+end_src
+
+消除歧义然后告诉rust我们想要使用的给Dog的Animal的实现, 我们需要完全限定语法. 代码19-21展示了如何使用完全限定语法.
+
+文件名: src/main.rs
+#+begin_src rust
+trait Animal {
+    fn baby_name() -> String;
+}
+
+struct Dog;
+
+impl Dog {
+    fn baby_name() -> String {
+        String::from("Spot")
+    }
+}
+
+impl Animal for Dog {
+    fn baby_name() -> String {
+        String::from("puppy")
+    }
+}
+
+fn main() {
+    println!("A baby dog is called a {}", <Dog as Animal>::baby_name());
+}
+#+end_src
+代码 19-21: 使用完全限定语法指定我们想要的来自Animal的baby_name函数为在Dog上的实现
+
+我们使用尖括号提供给rust一个类型申明, 这表明了我们想要调用来自Animal特性的baby_name方法作为在Dog上的实现, 通过表明我们在这次函数调用时想要把Dog类型当成一个Animal. 这段代码现在将输出我们想要的:
+#+begin_src shell
+$ cargo run
+   Compiling traits-example v0.1.0 (file:///projects/traits-example)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.48s
+     Running `target/debug/traits-example`
+A baby dog is called a puppy
+#+end_src
+
+通常, 完全限定语法被定义为如下:
+#+begin_src
+<Type as Trait>::function(receiver_if_method, next_arg, ...);
+#+end_src
+
+对于关联函数, 可能没有 receiver: 可能只有其它参数的列表. 你可以在任何你调用函数或者方法的地方使用完全限定语法. 然而, 你只被允许省略rust可以从程序里的其它信息计算出的这个语法的一部分. 你可能只需要使用更详细的语法防止有使用相同名字rust需要帮助来标识你想要调用的是哪个实现的多个实现.
+
+*** 使用超级特征来得到一个有其它特征的特征功能
+有时, 你可能需要一个特征使用其它特征的功能. 这种情况下, 你需要依靠同样被实现的依赖特征. 你依靠的特征是你实现的特征的超级特征.
+
+比如, 让我们表达我们想要一个有将在星号里输出一个格式化的值outline_print方法的outlinePrint特征. 就是这样, 给一个实现了Display的结构体Point产生 (x,y) 当我们在有为x和3为y有1,的Point实例调用outline_print时, 它将输出如下:
+#+begin_src
+**********
+\*        *
+\* (1, 3) *
+\*        *
+**********
+#+end_src
+
+在outline_print的实现里, 我们想要使用Display特征的功能. 因此, 我们需要指定OutlinePrint特征将只与了实现了Dispaly和提供OutlinePrint需要的类型一起工作. 我们可以能过指定 OutlinePrint: Display在特征定义里这样做. 这个技术和添加一个特征边界到特征里相似. 在19-22里展示一个outlinePrint特征的实现
+
+文件名: src/main.rs
+#+begin_src rust
+use std::fmt;
+
+trait OutlinePrint: fmt::Display {
+    fn outline_print(&self) {
+        let output = self.to_string();
+        let len = output.len();
+        println!("{}", "*".repeat(len + 4));
+        println!("*{}*", " ".repeat(len + 2));
+        println!("* {} *", output);
+        println!("*{}*", " ".repeat(len + 2));
+        println!("{}", "*".repeat(len + 4));
+    }
+}
+
+fn main() {}
+#+end_src
+代码 19-22: 需要来自Display的功能的outlinePrint的实现
+
+因为我们指定 OutlinePrint 需要Display特征, 我们可以使用自动为每种实现了Display实现的任何类型的 to_string函数. 如果我们没有在特征名后面添加一个冒号然后指定Display特征尝试使用 to_string, 我们将得到一个错误, 没有叫to_string的方法在当前作用域的&self上被发现.
+
+让我们看当我们尝试实现没有实现Display, 的一个类型比如Point结构体上实现OutlinePrilnt时发生了什么:
+
+文件名: src/main.rs
+#+begin_src rust
+use std::fmt;
+
+trait OutlinePrint: fmt::Display {
+    fn outline_print(&self) {
+        let output = self.to_string();
+        let len = output.len();
+        println!("{}", "*".repeat(len + 4));
+        println!("*{}*", " ".repeat(len + 2));
+        println!("* {} *", output);
+        println!("*{}*", " ".repeat(len + 2));
+        println!("{}", "*".repeat(len + 4));
+    }
+}
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+impl OutlinePrint for Point {}
+
+fn main() {
+    let p = Point { x: 1, y: 3 };
+    p.outline_print();
+}
+#+end_src
+我们得到一个错误表明, Display被需要但没有实现:
+#+begin_src shell
+$ cargo run
+   Compiling traits-example v0.1.0 (file:///projects/traits-example)
+error[E0277]: `Point` doesn't implement `std::fmt::Display`
+  --> src/main.rs:20:6
+   |
+20 | impl OutlinePrint for Point {}
+   |      ^^^^^^^^^^^^ `Point` cannot be formatted with the default formatter
+   |
+   = help: the trait `std::fmt::Display` is not implemented for `Point`
+   = note: in format strings you may be able to use `{:?}` (or {:#?} for pretty-print) instead
+note: required by a bound in `OutlinePrint`
+  --> src/main.rs:3:21
+   |
+3  | trait OutlinePrint: fmt::Display {
+   |                     ^^^^^^^^^^^^ required by this bound in `OutlinePrint`
+
+For more information about this error, try `rustc --explain E0277`.
+error: could not compile `traits-example` due to previous error
+#+end_src
+
+修正这个错误, 我们在Porint上实现Display然后满足OutlinePrint城杂的要求, 像这样:
+
+文件名: src/main.rs
+#+begin_src rust
+trait OutlinePrint: fmt::Display {
+    fn outline_print(&self) {
+        let output = self.to_string();
+        let len = output.len();
+        println!("{}", "*".repeat(len + 4));
+        println!("*{}*", " ".repeat(len + 2));
+        println!("* {} *", output);
+        println!("*{}*", " ".repeat(len + 2));
+        println!("{}", "*".repeat(len + 4));
+    }
+}
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+impl OutlinePrint for Point {}
+
+use std::fmt;
+
+impl fmt::Display for Point {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "({}, {})", self.x, self.y)
+    }
+}
+
+fn main() {
+    let p = Point { x: 1, y: 3 };
+    p.outline_print();
+}
+#+end_src
+
+然后在Print上的OutlinePrint的实现将成功编译. 然后我们可以在一个Porint实例上调用outline_print来带有星号的强调展示它
+
+*** 使用新类型模式来实现外部类型的扩展特征
+在第10章" 实现一个类型上的特征"节, 我们提到我们允许实现一个类型上的特征也和类型的特征的状态一样的独立规则在我们的库里. 可能使用新类型模式得到围绕它的限制, 这关联到在一个元组里创建一个新类型(我们在第5章的"使用滑名字的字段里创建不同类型元组结构体"), 那个元组结构体只有一个字段然后被我们想要实现的特征所包裹. 然后包裹类型在我们的库里, 我们可以在包裹里实现特征. 新类型是一个Haskell编程语言的术语. 使用这个模式没有运行时性能损失, 在编译时包裹类型被劣.
+
+一个例子, 让我们看我们想在Vec<T>上实现的Display, 独立的规则阻止我们直接地这样做, 因为Display特征和Vec<T>类型被定义在我们库的外面. 我们可以让一个结构体保存一个Vec<T>的实例, 然后我们可以实现Drawpper上的Display然后使用Vec<T>值, 如代码19-23.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::fmt;
+
+struct Wrapper(Vec<String>);
+
+impl fmt::Display for Wrapper {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "[{}]", self.0.join(", "))
+    }
+}
+
+fn main() {
+    let w = Wrapper(vec![String::from("hello"), String::from("world")]);
+    println!("w = {}", w);
+}
+#+end_src
+代码19-23: 创建一个Vec<String>类型的Wrapper来实现Display
+
+使用Display的实现使用self.为来访问内部的Vec<T>, 因为Wrapper是一个元组结构体然后Vec<T>是在元组里的索引为0的元素. 然后我们可以使用在Wrapper上的Display顾炎武的功能.
+
+使用这个技术的缺点是Wrapper是一个新类型, 所以它不能有保存值的方法. 我们必须直接地在Wrapper上实现所有的Vec<T>的方法, 如此, 方法代理到self.o, 这允许我们更精确地把Wrapper当作一个Vec<T>, 如果我们想要新类型有内部类型有的每个方法, 实现Deref特征(在第15章"使用Deref特征把智能指针当作常规引用")在Wrapper上来返回内部的值将是一个方案. 如果我们不想Wrapper类型有所有的内部类型的方法,-- 比如, 限制Wrapper类型的行为-- 我们必须只实现我们想要手工实现的方法.
+
+现在你知道了新类型如何被使用在特征的关系里; 即使当特征没被关联这也是一个有用的模式. 让我们切换焦点来看一些和rust类型系统交互的高级方式.
+
