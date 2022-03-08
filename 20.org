@@ -1,0 +1,1517 @@
+* 最终项目: 构建一个多线程web服务
+这是一个很长的旅行, 但我们已经到了本书的终点. 本章里, 我们将构建不只一个项目,一起表达一些我们在最终章覆盖了的概念, 也作为之前课程的复习.
+
+对于我们的最终项目, 我们将创建一个在一个网页浏览器里说"Hello"然后看起来像图20-1的一个网页服务.
+
+[[https://doc.rust-lang.org/book/img/trpl20-01.png]]
+图 20-1: 我们的最终共享项目
+
+这是构建网页服务的计划:
+1. 学习一点关于TCP和HTTP.
+2. 在一个套接字上监听TCP连接.
+3. 产生一个合适的HTTP响应.
+4. 使用一个线程池提升我们网页服务的吞吐量.
+   
+但在开始之前, 我们应该提到一个细节: 我们将使用的方法不一定是rust里最好的通过网页服务的方式. 很多为生产环境准备的库在crates.io上, 他们提供了比我产将构建的更完整的网页服务和线程池实现.
+
+然而, 这章我们的意图是帮助你学习, 不是获取一个简单的路由. 因为rust是一个系统编程语言, 我们可以选择我们想要工作的抽象层级和可以到达比可能或者实现在其它语言里更低. 我们将手工写基本的HTTP服务和线程池, 所以你可以学到通用的想法和你可能在将来用到的库里的技术.
+
+** 构建一个单线程网页服务
+我们将通过让一个单线程网页服务工作开始, 我们开始前, 让我们看一个在构建网页服务里关联的协议的快速概览. 这些协议的细节超出了本书的范围, 但是一个简单的概览将给你你需要的信息.
+
+在网页服务里关系到的两个主要的协议是超文本传输协议(HTTP)和传输控制协议(TCP). 两个协议都是请求-响应协议, 意味着一个客户端初始化请求然后一个服务监听这个请求然后提供一个响应给客户端. 这些请求的内容和响应被协议所定义.
+
+TCP是更低级别的协议, 它描述了信息如何从一个服务到另一个的细节,但不指定那个信息是什么. HTTP通过定义请求和响应的内容构建于TCP之上. 它从技术上提供了伴随其它协议使用HTTP的可能性, 但在多数情况下, HTTP在TCP上面发送它的数据. 我们将和TCP和HTTP响应和请求的原始字节一起工作.
+
+*** 监听TCP连接
+我们的网页服务需要监听TCP连接, 这是我们将工作于之上的第一个部分. 标准库提供让我们做这些的std::net模块. 让我们以常规的形式创建一个新项目:
+#+begin_src shell
+$ cargo new hello
+     Created binary (application) `hello` project
+$ cd hello
+#+end_src
+
+现在进入到src/main.rs在代码20-1里开始. 这段代码将为到达的TCP流临川地址 127.0.0.1:7878. 当它得到一个传递流时, 这将输出 Connection established!.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::net::TcpListener;
+
+fn main() {
+    let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
+
+    for stream in listener.incoming() {
+        let stream = stream.unwrap();
+
+        println!("Connection established!");
+    }
+}
+#+end_src
+代码20-1: 为传递的流监听然后当我们收到一个流时输出一个消息
+
+使用TcpListener, 我们可以在地址 127.0.0.1:7878上为TCP连接监听. 在那个地址里, 冒号前面的部分是代表你的电脑的IP地址(每个电脑上这个都是相同的, 也不用特别地表达作者的电脑), 7878是端口号. 我们选择这部分出于两个原因: HTTP不经常在这个端口号被接收, 然后7878是rust打在电话上的.
+
+这个场景下的bind函数像new函数一样在它上面将返回一个新的TcpListener实例. bind函数被调用的原因是在网络,连接到一个用来监听的端口被称为"绑定到一个端口".
+
+bind函数返回一个Result<T,E>, 这表明绑定可能失败. 比如, 绑定到80端口需要管理员权限(非管理员只可以监听大于1023的端口), 如果没成为一个管理员去绑定80端口, 绑定将不生效. 另一个例子, 如果我们运行我们程序的两个实例所以有两个长夜难明监听相同端口, 绑定也不生效. 因为我们写了一个以监听为目的的基本服务, 我们不处理绑定的这些错误; 而是, 如果错误发生,我们使用unwrap停止程序.
+
+TcpListener上的incoming返回珍上给我们流(更确切地, TcpStream类型的流)的序列的一个迭代器. 一个单一的流表示一个在客户端和服务端之间打开的连接. 一个连接是给一个完整的请求和响应过程的名字,在上面一个客户端连接到服务端, 服务端生成一个响应, 然后服务端关闭连接. 如此, TcpStream 将从它自己读取来看到客商端发送了什么和然后允许我们写我们的响应到那个流. 总之, 这个for循环会来回处理每个请求然后产生一系列的流给我们处理.
+
+现在, 我们的流处理包括如果流发生任何错误, 调用unwrap来终止我们的程序; 如果没有任何错误, 程序输出一个消息. 在下面的监听里我们给成功的情况添加更多的功能. 当一个客户端连接到服务端时我们可能接收到错误的原因是我们不确切地迭代所有请求. 相反, 我们的迭代连接尝试. 因为很多原因连接可能不成功, 它们中的很多由操作系统指定. 比如, 很多操作系统限制了他们可以支持的同时打开连接数量; 超过那个数量的新连接的尝试直到打开的连接被关闭前产生一个错误.
+
+让我们尝试运行这段代码! 在终端里执行cargo run然后在网页浏览器里加载 127.0.0.1:7878. 浏览器应该展示一个像"连接重置"类似的错误消息, 因为服务端当前没有返回任何数据. 但是当你查看终端, 你应该看到一些当浏览器连接到服务商时输出的消息!
+#+begin_src
+     Running `target/debug/hello`
+Connection established!
+Connection established!
+Connection established!
+#+end_src
+
+有时, 你将从一个浏览器请求看到多条消息; 原因可能是浏览器为页面产生了一个请求也为其它资源产生一个请求, 比如 出现在浏览器标签页的favicon.icon 图标.
+
+当你运行完代码的特定版本后, 记着按ctrl-c停止程序. 然后你改完代码重新运行 cargo run 来确保你运行了最新的代码.
+
+*** 读取请求
+让我们实现读取从浏览器来的请求的功能!分担第一次得到一个连接然后接收伴随连接的一些行为的担忧, 我们开始一个新的函数来处理连接. 在新的handle_connection函数里, 我们将读取从TCP流来的数据然后输出它, 所以我们可以看到从浏览器发送的数据. 修改代码让它看起来像代码20-2.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::io::prelude::*;
+use std::net::TcpListener;
+use std::net::TcpStream;
+
+fn main() {
+    let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
+
+    for stream in listener.incoming() {
+        let stream = stream.unwrap();
+
+        handle_connection(stream);
+    }
+}
+
+fn handle_connection(mut stream: TcpStream) {
+    let mut buffer = [0; 1024];
+
+    stream.read(&mut buffer).unwrap();
+
+    println!("Request: {}", String::from_utf8_lossy(&buffer[..]));
+}
+#+end_src
+代码 20-2: 从TcpStream读取数据然后输出
+
+我们引入std::io::prelude 到作用域来访问让我们读写流的特定特征. 在main函数的for循环里, 相对输出一个讣告我们创建了一个链接的消息, 现在我们调用新的handle_connection函数传递stream到里面.
+
+在handle_connection函数里, 我们让stream参数可读写. 原因是TcpStream实例跟踪数据内部地返回什么给我们. 它可能读取到比我们请求更多的数据和保存数据给下一次我们请求时的数据. 因此它需要是mut的, 因为它的内部状态可能改变; 通常, 我们认为"读"不需要修可修改, 但这个情况下, 我们需要mut关键字.
+
+下面, 我们需要确实地从流读取数据. 我们两步完成: 首先, 我们在栈上定义一个buffer来保存读到的数据. 我们让buffer有1024字节的大小, 这对于保存基本的请求和满足于我们在本章里的意图足够大. 如果我们想要处理任意大小的请求, 缓存管理需要更复杂, 现在我们让它简单点, 我们传递缓存到 stream.read, 这将读来自TcpStream的字节然后在输出在缓存里的它们.
+
+第二步, 我们转换缓存里的字节数据到一个字符串然后输出字符串. String::from_utf_lossy函数萄产一个 &[u8]然后产生一个来自它的字段串. 名字的"lossy"部分表明这个函数的行为, 当我们看到一个龙蛇混杂的UTF-8序列: 它将使用?替换非法的序列, U+FFFD REPLACEMENT CHARACTER. 你可能在没有被请求数据的缓存里的字符里看到替换字符.
+
+让我们尝试这段代码! 启动程序然后在浏览器里再次 请求. 注意我们在浏览器里仍然得到一个错误页面, 但在终端里我们程序的输出将看起来如下:
+
+#+begin_src shell
+$ cargo run
+   Compiling hello v0.1.0 (file:///projects/hello)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.42s
+     Running `target/debug/hello`
+Request: GET / HTTP/1.1
+Host: 127.0.0.1:7878
+User-Agent: Mozilla/5.0 (Windows NT 10.0; WOW64; rv:52.0) Gecko/20100101
+Firefox/52.0
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
+Accept-Language: en-US,en;q=0.5
+Accept-Encoding: gzip, deflate
+Connection: keep-alive
+Upgrade-Insecure-Requests: 1
+������������������������������������
+#+end_src
+
+根据你的浏览器, 你得到的输出可能有一点不同. 现在我们输出了请求的数据, 我们可以看到为什么我们从一个浏览器请求通过查看Request: GET后面的路径得到多个请求. 如果被替换的请求全部是请求/, 我们知道浏览器尝试复杂地请求/ , 因为它没有从我们的程序里得到一个响应.
+
+让我们中断这个请求数据来理解浏览器给我们的程序请求什么.
+
+*** 更近一步看看一个HTTP请求
+HTTP是一个基于文本的协议, 请求像如下形式:
+#+begin_src
+Method Request-URI HTTP-Version CRLF
+headers CRLF
+message-body
+#+end_src
+
+第一行是保存关于客户请求的是什么的请求行. 请求行的第一部分指出被使用的方法, 比如GET或者POST, 这描述了客户端是如何创建这个请求. 我们的客户端使用一个GET请求.
+
+请求行的下一个部分是/, 这表明了客户端请求的 统一资源定位符(URI): 一个URL大部分,但不绝对和统一资源标识符一样(URL)一样. URL和URI的区分对于在本章我们的意图里不重要, 但是HTTP指定使用的术语URI, 所以我们可以仅仅在这里用URL替换URI.
+
+最后一部分是客户端使用的HTTP版本号, 然后请求行以CRLF序列终止(CRLF基于carriage return 和 line feed,这是来自打字机时代的术语) CRLF序列也可以写作 \r\n, \r是一个回车然后\n是一个换行. CRLF序列把请求行和请求数据的剩下部分分开, 注意当CRLF被输出时, 我们看到一个新行而不是\r\n.
+
+看一下目前为止我们从运行我们的程序收到的请求行, 我们看到GET是方法,/ 是请求URL, HTTP/1.1是版本号.
+
+请求行之后, 从Host:前面 剩下的部分是请求头, GET请求没有请求体
+
+尝试从不同浏览器请求或者请求一个不同的地址, 比如 127.0.0.1:7878/test, 来看看请求数据如何变化.
+
+现在我们知道了浏览器请求的是什么, 让我们发送一些数据回去!
+
+*** 写一个响应
+现在我们将实现在响应里发送数据到客户请求. 响应有如下的格式:
+#+begin_src
+HTTP-Version Status-Code Reason-Phrase CRLF
+headers CRLF
+message-body
+#+end_src
+
+第一行是包含在响应里使用的HTTP版本, 一个总结请求的结果的数字状态码, 和一个提供状态码的文本描述的短语的状态行. 在CRLF序列后面是所有的响应头, 另外的
+CRLF序列和响应体.
+
+这是一个使用HTTP版本1.1 和200状态码, OK原因短语,没有响应头也没有响应体的示例响应.:
+#+begin_src
+HTTP/1.1 200 OK\r\n\r\n
+#+end_src
+
+状态码200是标准成功响应. 文本是最小化的HTTP响应. 让我们把这个作为我们的来自handle_connection函数的成功响应写到流里面, 移除了输出请求o发所的println! 然后替换为在代码2-03里的代码.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::io::prelude::*;
+use std::net::TcpListener;
+use std::net::TcpStream;
+
+fn main() {
+    let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
+
+    for stream in listener.incoming() {
+        let stream = stream.unwrap();
+
+        handle_connection(stream);
+    }
+}
+
+fn handle_connection(mut stream: TcpStream) {
+    let mut buffer = [0; 1024];
+
+    stream.read(&mut buffer).unwrap();
+
+    let response = "HTTP/1.1 200 OK\r\n\r\n";
+
+    stream.write(response.as_bytes()).unwrap();
+    stream.flush().unwrap();
+}
+#+end_src
+代码 20-3: 写一个简单的成功HTTP响应到流
+
+第一行定义保存成功消息数据的response变量. 然后我们调用response上的as_bytes转化字符串数据为字节. stream上的write方法接收一个&[u8]然后直接地发送这些字节到连接.
+
+因为write操作可能失败, 我人产使用像之前一样的任何错误上的unwrap. 在一个真实的应用里, 你应该在这里添加错误处理. 最终, flush将等待和阻止程序继续, 至到所有字节被写入连接; TcpStream 包含一个内部的缓存来最小化调用到操作系统里.
+
+有了这些修改, 让我们运行我们的代码, 然后生成一个讲求. 我们不再输出任何数据到终端, 所以我们将看不到任何从Cargo来的输出. 然后我们在一个网页浏览器里加载 127.0.0.1:7878, 你应该得到一个空白,而不是一个错误. 我们硬编码了请求和响应!
+
+*** 返回真实的HTML
+让我们实现功能来返回比空白页更多. 创建一个新文件, hello.html, 在你项目的根目录, 不在src目录. 你可以放任何你想要的HTML; 代码20-4 展示一个可能.
+
+文件名: hello.html
+#+begin_src html
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Hello!</title>
+  </head>
+  <body>
+    <h1>Hello!</h1>
+    <p>Hi from Rust</p>
+  </body>
+</html>
+#+end_src
+代码 20-4: 一个简单的HTML文件来在响应里返回
+
+这是一个有标题有一些文本的最小HTML5文档. 当接收到一个请求时从服务端返回这个. 我们将修改handle_connection如代码20-5里来读取HTML文件, 作为响应体添加到响应, 然后发送它.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::fs;
+// --snip--
+
+use std::io::prelude::*;
+use std::net::TcpListener;
+use std::net::TcpStream;
+
+fn main() {
+    let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
+
+    for stream in listener.incoming() {
+        let stream = stream.unwrap();
+
+        handle_connection(stream);
+    }
+}
+
+fn handle_connection(mut stream: TcpStream) {
+    let mut buffer = [0; 1024];
+    stream.read(&mut buffer).unwrap();
+
+    let contents = fs::read_to_string("hello.html").unwrap();
+
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
+        contents.len(),
+        contents
+    );
+
+    stream.write(response.as_bytes()).unwrap();
+    stream.flush().unwrap();
+}
+#+end_src
+代码 20-5: 发送hello.html的内容作为响应体
+
+我们在顶部添加一行来引入标准库的文件系统模块到作用域. 用来读取文件内容到一个字符串的代码应该看起来相似; 我们在12章里当我们读取一个文件的内容给我们的在12-4里的I/O项目时使用的.
+
+下面, 我们使用 format! 来添加文件内容作为成功响应的主体. 确保一个有效的HTTP响应, 我们添加 COnent-Length头, 它是我们响应体大小的尺寸设置, 这个情况下是hello.html文本的大小.
+
+使用cargo run运行这段代码然后在你的浏览器里加载 127.0.0.1:7878; 你应该看到你的HTML被渲染!
+
+现在, 我们忽略了在buffer里的请求数据然后只无条件地发送回html文件的内容. 意味着如果在你的浏览器里请求127.0.0.1:7878/something-else, 你也将得到相同的HTML响应. 我们的服务非常有限不是大多数网页浏览器做的那样. 我们想根据请求自定义响应然后发送HTML文件给一个形式良好的/ 请求.
+
+*** 验证请求有选择性地响应
+现在, 不管客户端请求的是什么我们的网页服务将返回在文件里的HTML. 让我们添加检查t济器正在请求/之后返回HTML文件然后如果浏览器请求其它的返回一个错误的功能. 实现这个, 我们需要修改 handle_connection如代码20-6. 新代码检查接收到的请求内容和我们知道的一个请求是/看起来像什么然后添加if和else块来分别响应.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::fs;
+use std::io::prelude::*;
+use std::net::TcpListener;
+use std::net::TcpStream;
+
+fn main() {
+    let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
+
+    for stream in listener.incoming() {
+        let stream = stream.unwrap();
+
+        handle_connection(stream);
+    }
+}
+
+// --snip--
+
+fn handle_connection(mut stream: TcpStream) {
+    let mut buffer = [0; 1024];
+    stream.read(&mut buffer).unwrap();
+
+    let get = b"GET / HTTP/1.1\r\n";
+
+    if buffer.starts_with(get) {
+        let contents = fs::read_to_string("hello.html").unwrap();
+
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
+            contents.len(),
+            contents
+        );
+
+        stream.write(response.as_bytes()).unwrap();
+        stream.flush().unwrap();
+    } else {
+        // some other request
+    }
+}
+#+end_src
+代码20-6: 匹配请求然后处理请求到/不同于其它的请求
+
+首先, 我们硬编码用来请求的正确数据到get变量. 因为我们读取原始字节到缓存里, 我们通过在内容数据的开头添加一个b""字节语法转化get到一个字节字符串. 然后我们检查buffer是否开始于在get里的字节, 如果是, 我们收到一个格式良好的到/的请求, 这是成功的情况我们在if块里处理, 返回我们的HTML文本的内容.
+
+如果buffer没有以在get里的字节开始, 它意味着我们收到一些其它的请求. 我们将在一个需要返回给所有其它请求的时候添加代码到else块.
+
+运行现在的代码然后请求 127.0.0.1:7878; 你应该得到在 hello.html里的HTML. 如果你请求其它的, 比如 127.0.0.1:7878/something-else,你应该得到一个像当在20-1和20-2里的代码运行看到的那样得到一个连接错误.
+
+现在让我们添加在20-7里的代码到else块来返回一个带有状态码404的响应, 这标志着请求的内容没找到. 我们也将返回一个HTML来渲染一个页面来在浏览器里, 指示响应终结于用户.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::fs;
+use std::io::prelude::*;
+use std::net::TcpListener;
+use std::net::TcpStream;
+
+fn main() {
+    let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
+
+    for stream in listener.incoming() {
+        let stream = stream.unwrap();
+
+        handle_connection(stream);
+    }
+}
+
+fn handle_connection(mut stream: TcpStream) {
+    let mut buffer = [0; 1024];
+    stream.read(&mut buffer).unwrap();
+
+    let get = b"GET / HTTP/1.1\r\n";
+
+    if buffer.starts_with(get) {
+        let contents = fs::read_to_string("hello.html").unwrap();
+
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
+            contents.len(),
+            contents
+        );
+
+        stream.write(response.as_bytes()).unwrap();
+        stream.flush().unwrap();
+    // --snip--
+    } else {
+        let status_line = "HTTP/1.1 404 NOT FOUND";
+        let contents = fs::read_to_string("404.html").unwrap();
+
+        let response = format!(
+            "{}\r\nContent-Length: {}\r\n\r\n{}",
+            status_line,
+            contents.len(),
+            contents
+        );
+
+        stream.write(response.as_bytes()).unwrap();
+        stream.flush().unwrap();
+    }
+}
+#+end_src
+代码 20-7: 如果请求其它的, 响应状态码 404和一个错误页
+
+这里, 我们的哪个方法一个带有状态码404的状态和原因短语NOT FOUND.响应体将是在文件 404.html里的HTML. 你将需要给错误页创建一个 404.html文件临近hello.html, 再次随意使用你想要的任何HTML或者使用一个在20-8里的示例HTML.
+
+文件名: 404.html
+#+begin_src html
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Hello!</title>
+  </head>
+  <body>
+    <h1>Oops!</h1>
+    <p>Sorry, I don't know what you're asking for.</p>
+  </body>
+</html>
+#+end_src
+代码 20-8: 随着404响应发送回去的页面的简单内容
+
+有了这些修改, 再次运行你的服务. 请求 127.0.0.1:7878 应该返回 hello.html的内容, 然后其它的请求, 像127.0.0.1:7078/foo,将返回 404.html里的错误HTML.
+
+*** 一点重构
+现在,if和else块有了很多的重复: 他们都读取文件然后写文件的内容到流里. 唯一的不同是状态行和文件名. 把这些不同放到将赋值状态行的值和文件名到变量里的if和else里让代码更加简洁; 然后我们可以无条件地使用这些在代码里的变量来读取文件然后写响应. 代码20-9 展示了替换大的if和else块的结果代码.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::fs;
+use std::io::prelude::*;
+use std::net::TcpListener;
+use std::net::TcpStream;
+
+fn main() {
+    let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
+
+    for stream in listener.incoming() {
+        let stream = stream.unwrap();
+
+        handle_connection(stream);
+    }
+}
+
+// --snip--
+
+fn handle_connection(mut stream: TcpStream) {
+    // --snip--
+
+    let mut buffer = [0; 1024];
+    stream.read(&mut buffer).unwrap();
+
+    let get = b"GET / HTTP/1.1\r\n";
+
+    let (status_line, filename) = if buffer.starts_with(get) {
+        ("HTTP/1.1 200 OK", "hello.html")
+    } else {
+        ("HTTP/1.1 404 NOT FOUND", "404.html")
+    };
+
+    let contents = fs::read_to_string(filename).unwrap();
+
+    let response = format!(
+        "{}\r\nContent-Length: {}\r\n\r\n{}",
+        status_line,
+        contents.len(),
+        contents
+    );
+
+    stream.write(response.as_bytes()).unwrap();
+    stream.flush().unwrap();
+}
+#+end_src
+代码 20-6: 重构if和else块来只包含区别于两种情况的代码
+
+现在 if和else块只在一个元组里给状态行和文件名返回合适的值; 然后我们使用一个在let语句里的模式解构赋值这些变量到 status_line和filename, 就像在18章讨论的.
+
+先前的重复代码布下在if和else块外面和使用statue_line和filename变量. 这让它更容易看到两种情况下的不同, 而且它意味着如果我们想要修改文件如果读和响应写操作如何工作我们只需要一个地y主来修改代码. 在20-9里的代码的行为将和在20-8里的一样.
+
+现在, 通过一个使用一个内容的页面响应一个请求和使用404响应其它请求的rust代码的接近40行里我们有了一个简单的网页服务.
+
+现在, 我们的服务运行在一个章线程里, 意味着它在一个时间只能服务一个请求. 通过模拟相同的慢请求让我们解释那如果可能是一个问题. 然后我们将修正它让我们的服务可以一次处理多个请求.
+
+
+** 转化我们的单线程服务为多线程服务
+现在, 服务将交替地处理每个请求, 意味至到第一个请求处理完它将不处理第二个连接. 如果服务接收到越来越多的请求, 这种执行将越来越不理想. 如果服务接收到一个需要长时间处理的请求, 后面的序列至到长请求完成必须一直等待, 即使新请求可以被很快处理. 这们将需要修正这里, 但首先, 我们将看实际的问题.
+
+*** 在当前的服务实现上模拟一个慢请求
+我们将看到在我们当前服务的实现里, 一个缓慢的处理讲求可以如何影响其它请求. 代码20-10 实现了伴随模拟将导致在响应前服务器睡眠5秒的慢响应的一个处理请求的实现.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::fs;
+use std::io::prelude::*;
+use std::net::TcpListener;
+use std::net::TcpStream;
+use std::thread;
+use std::time::Duration;
+// --snip--
+
+fn main() {
+    let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
+
+    for stream in listener.incoming() {
+        let stream = stream.unwrap();
+
+        handle_connection(stream);
+    }
+}
+
+fn handle_connection(mut stream: TcpStream) {
+    // --snip--
+
+    let mut buffer = [0; 1024];
+    stream.read(&mut buffer).unwrap();
+
+    let get = b"GET / HTTP/1.1\r\n";
+    let sleep = b"GET /sleep HTTP/1.1\r\n";
+
+    let (status_line, filename) = if buffer.starts_with(get) {
+        ("HTTP/1.1 200 OK", "hello.html")
+    } else if buffer.starts_with(sleep) {
+        thread::sleep(Duration::from_secs(5));
+        ("HTTP/1.1 200 OK", "hello.html")
+    } else {
+        ("HTTP/1.1 404 NOT FOUND", "404.html")
+    };
+
+    // --snip--
+
+    let contents = fs::read_to_string(filename).unwrap();
+
+    let response = format!(
+        "{}\r\nContent-Length: {}\r\n\r\n{}",
+        status_line,
+        contents.len(),
+        contents
+    );
+
+    stream.write(response.as_bytes()).unwrap();
+    stream.flush().unwrap();
+}
+#+end_src
+代码20-10: 通过认识/睡眠和睡眠5秒模拟一个慢请求
+
+这段代码有点乱, 但对于模拟意图足够了. 我们创建了第二个请求 slepp, 我们的服务承认的这些数据, 我们在if块后面添加一个else if来检查请求. 当那个请求被接收到时, 服务将在渲染成功的HTML页面前睡眠5秒.
+
+你可以看到我们的服务是如果的基础: 真实的库将以更简洁的方式处理多个请求的识别!
+
+使用cargo run开始服务, 然后打开两个浏览器窗口: 一个 http:127.0.0.1:7878/ 另一个 http://127.0.0.1:7878/sleep. 如是你进入/ URL 几分钟, 像之前一样, 你将看到它很快响应. 但如果进入 /sleep 然后加载/ , 你将看在加载前到至到sleep睡眠完整的5秒后 / 将等待.
+
+我们可以修改我们的网页浏览器如何工作有多种方式在慢请求的后面来避免更多的后台请求; 我们将实现的一种是线程池.
+
+*** 使用线程池提升吞吐量
+一个线程池是等待和准备处理任务的交互线程的组. 当程序接收到一个新的任务, 它分配在池里的一个线程给任务, 然后那个线程处理任务. 当第一个线程在处理的时候,在池里剩下的线程可以用来处理其它进入的任务. 当第一个线程处理完它的任务, 它被返回到空闲线程池里, 准备处理新任务. 一个线程池允许你处理当前的连接, 增加你的服务的吞吐.
+
+我们将限制在池里的线程数量为小一点的数来阻止拒绝服务攻击(Dos); 如果当它进来时我们让我们的程序给每个请求创建一个绪中, 某人通过使用所有服务资源和消磨请求的处理干净,发起1千万个请求到我们的服务将是一场洗劫.
+
+与其无限的线程, 我们将有一个在池里的线程的固定数量. 当请求到来时, 它们将被发送到池里处理. 池将保留一个传入请求的序列. 池里的每个线程将从序列里弹出一个请求, 处理讲求, 然后询问请求其它的请求. 有了这个设计, 我们可以并发处理N个请求, 这里N是线程的数量. 如果每个线程响应一个长运行的请求, 后面的请求可以依然保留在序列里, 但我们增加了前到达那个点我们可以处理的长请求的数量.
+
+这个技术只是提升网页服务的吞吐的很多方式中的一种. 你可能看到的其它方式是 fork/join 模式和单线程  I/O 模型, 如果你对这个主题感兴趣, 你可以读更多关于其它方案然后尝试在rust里实现它们; 有了一个像rust一样的低级别语言, 所有这些选项都可以实现.
+
+我们开始实现一个线程池之前, 让我们讨论使用线程池应该看起来像什么. 当你尝试设计代码, 首先写客户接口有助于你的设计. 写代码的API让它以你想要调用它的方式组织代码; 然后实现在那个结构里的功能而不是实现功能然后设计公共API.
+
+和在12章里的项目里我们如何使用测试驱动开始相似, 在这里,我们将使用编译驱开发. 我们将写调用我们想要的函数的代码, 然后我们将看到来自编译器的错误来决定下面我们将要修改什么来让代码工作.
+
+*** 如果我们可以为每个请求创建一个线程的代码结构
+首先, 让我们解释如果它为每个连接创建一个新的线程我们的代码可能看起来像什么. 像之前一样, 因为有潜在的创建一个不限的线程数, 所以这不是我们的最终项目, 但它是一个开始点. 代码20-11展示了让main创建一个新线程来处理每个在for循环里的流的修改.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::fs;
+use std::io::prelude::*;
+use std::net::TcpListener;
+use std::net::TcpStream;
+use std::thread;
+use std::time::Duration;
+
+fn main() {
+    let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
+
+    for stream in listener.incoming() {
+        let stream = stream.unwrap();
+
+        thread::spawn(|| {
+            handle_connection(stream);
+        });
+    }
+}
+
+fn handle_connection(mut stream: TcpStream) {
+    let mut buffer = [0; 1024];
+    stream.read(&mut buffer).unwrap();
+
+    let get = b"GET / HTTP/1.1\r\n";
+    let sleep = b"GET /sleep HTTP/1.1\r\n";
+
+    let (status_line, filename) = if buffer.starts_with(get) {
+        ("HTTP/1.1 200 OK", "hello.html")
+    } else if buffer.starts_with(sleep) {
+        thread::sleep(Duration::from_secs(5));
+        ("HTTP/1.1 200 OK", "hello.html")
+    } else {
+        ("HTTP/1.1 404 NOT FOUND", "404.html")
+    };
+
+    let contents = fs::read_to_string(filename).unwrap();
+
+    let response = format!(
+        "{}\r\nContent-Length: {}\r\n\r\n{}",
+        status_line,
+        contents.len(),
+        contents
+    );
+
+    stream.write(response.as_bytes()).unwrap();
+    stream.flush().unwrap();
+}
+#+end_src
+代码 20-11: 给每个流创建一个新线程
+
+就像在16章里学到的, thread::spawn 将创建一个新线程然后在新线程里运行在必包里的代码. 如果你运行这段代码然后在你的浏览器里加载 /sleep ,然后在另外的浏览器标签加载 /, 你将确实地看到请求/ 不需要等待 /sleep完成. 但就像我们提到的, 这最终会压倒系统, 因为你没有限制的创建新线程.
+
+*** 为有限的线程数量创造相似的接口
+我们想要我们的线程池以一种相似的, 熟悉的方式工作以从线程到线程池切换不需要更大的使用我们API的代码修改. 代码20-12 展示了给我们想使用来代码thread::spawn的ThraedPool结构的假想定义.
+
+文件名: src/main.rs
+#+begin_src rust
+use std::fs;
+use std::io::prelude::*;
+use std::net::TcpListener;
+use std::net::TcpStream;
+use std::thread;
+use std::time::Duration;
+
+fn main() {
+    let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
+    let pool = ThreadPool::new(4);
+
+    for stream in listener.incoming() {
+        let stream = stream.unwrap();
+
+        pool.execute(|| {
+            handle_connection(stream);
+        });
+    }
+}
+
+fn handle_connection(mut stream: TcpStream) {
+    let mut buffer = [0; 1024];
+    stream.read(&mut buffer).unwrap();
+
+    let get = b"GET / HTTP/1.1\r\n";
+    let sleep = b"GET /sleep HTTP/1.1\r\n";
+
+    let (status_line, filename) = if buffer.starts_with(get) {
+        ("HTTP/1.1 200 OK", "hello.html")
+    } else if buffer.starts_with(sleep) {
+        thread::sleep(Duration::from_secs(5));
+        ("HTTP/1.1 200 OK", "hello.html")
+    } else {
+        ("HTTP/1.1 404 NOT FOUND", "404.html")
+    };
+
+    let contents = fs::read_to_string(filename).unwrap();
+
+    let response = format!(
+        "{}\r\nContent-Length: {}\r\n\r\n{}",
+        status_line,
+        contents.len(),
+        contents
+    );
+
+    stream.write(response.as_bytes()).unwrap();
+    stream.flush().unwrap();
+}
+#+end_src
+代码 20-12: 一个理想的 ThreadPool接口
+
+我们使用ThreadPool::new来创建带有可配置的线程数量的新线程池, 在这个情况下. 然后, 在for循环里, pool.execute 有和在它里接收一个线程将为每个流运行的必包的thread::spawn相似的接口. 我们需要实现pool.execute来让它接收必包然后把它给到池里的一个线程来运行. 这段代码将编译不了,但我们将尝试所以编译器可以指导我们如何修正它.
+
+*** 使用编译器驱动开发结构线程池结构体
+修改代码20-12到src/main.rs里, 然后让我们使用来自 cargo check的编译器错误驱动我们的开发, 这是我们得到的第一个错误:
+#+begin_src shell
+$ cargo check
+    Checking hello v0.1.0 (file:///projects/hello)
+error[E0433]: failed to resolve: use of undeclared type `ThreadPool`
+  --> src/main.rs:10:16
+   |
+10 |     let pool = ThreadPool::new(4);
+   |                ^^^^^^^^^^ use of undeclared type `ThreadPool`
+
+For more information about this error, try `rustc --explain E0433`.
+error: could not compile `hello` due to previous error
+#+end_src
+
+很好! 这个错误告诉我们我们需要一个ThreadPool类型或者模块. 我们的ThreadPool实现将被各种运行我们网页服务所依赖. 所以, 让我们切换到来自二进制库的hello库到库crate来保存我们的ThreadPool实现. 我们修改到普通库以后, 我们也可以 使用线程池使用分开的线程库给我们想要做的每个工作, 不只是给网页请求.
+
+创建一个包含如下的 src/lib.rs, 它是我们现在可以有的ThreadPool结构体的最简单的定义:
+
+文件名: src/lib.rs
+#+begin_src rust
+pub struct ThreadPool;
+#+end_src
+
+然后我们创建一个新的目录, src/bin, 然后移动在src/main.rs里的根库到 src/bin/main.rs, 做这些将让普通库成为在hello 目录里的基础库; 我们也可以通过 cargo run 运行在src/bin/main.rs里的二进制, 移动完 main.rs文件以后, 编辑它通过添加如下代码到 src/bin/main.rs里顶部引入普通库然后引入ThreadPool到作用域:
+
+文件名: src/bin/main.rs
+#+begin_src rust
+use hello::ThreadPool;
+use std::fs;
+use std::io::prelude::*;
+use std::net::TcpListener;
+use std::net::TcpStream;
+use std::thread;
+use std::time::Duration;
+
+fn main() {
+    let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
+    let pool = ThreadPool::new(4);
+
+    for stream in listener.incoming() {
+        let stream = stream.unwrap();
+
+        pool.execute(|| {
+            handle_connection(stream);
+        });
+    }
+}
+
+fn handle_connection(mut stream: TcpStream) {
+    let mut buffer = [0; 1024];
+    stream.read(&mut buffer).unwrap();
+
+    let get = b"GET / HTTP/1.1\r\n";
+    let sleep = b"GET /sleep HTTP/1.1\r\n";
+
+    let (status_line, filename) = if buffer.starts_with(get) {
+        ("HTTP/1.1 200 OK", "hello.html")
+    } else if buffer.starts_with(sleep) {
+        thread::sleep(Duration::from_secs(5));
+        ("HTTP/1.1 200 OK", "hello.html")
+    } else {
+        ("HTTP/1.1 404 NOT FOUND", "404.html")
+    };
+
+    let contents = fs::read_to_string(filename).unwrap();
+
+    let response = format!(
+        "{}\r\nContent-Length: {}\r\n\r\n{}",
+        status_line,
+        contents.len(),
+        contents
+    );
+
+    stream.write(response.as_bytes()).unwrap();
+    stream.flush().unwrap();
+}
+#+end_src
+
+这段代码仍然不工作, 但让我们再次检查来得到我们需要定位的下面错误:
+#+begin_src shell
+$ cargo check
+    Checking hello v0.1.0 (file:///projects/hello)
+error[E0599]: no function or associated item named `new` found for struct `ThreadPool` in the current scope
+  --> src/bin/main.rs:11:28
+   |
+11 |     let pool = ThreadPool::new(4);
+   |                            ^^^ function or associated item not found in `ThreadPool`
+
+For more information about this error, try `rustc --explain E0599`.
+error: could not compile `hello` due to previous error
+#+end_src
+
+这个错误指出下面我们需要给ThreadPool创建一个关联函数new. 我们也知道new需要接收可以接收4作为一个参数的一个参数然后应该返回一个ThreadPool实例. 让我们实现将有这些特征的最简单的newo孟尝君:
+
+文件名: src/lib.rs
+#+begin_src rust
+pub struct ThreadPool;
+
+impl ThreadPool {
+    pub fn new(size: usize) -> ThreadPool {
+        ThreadPool
+    }
+}
+#+end_src
+
+我们选择 usize作为size参数的类型, 因为我们知道线程的一个负数量不产生任何作用. 我们也知道我们瘵使用4作为在线程集合里的元素的数量, 这是usize类型可以提供的, 就像我们在第3章的"数字类型"里讨论的.
+
+让我们再次检查代码:
+#+begin_src shell
+$ cargo check
+    Checking hello v0.1.0 (file:///projects/hello)
+error[E0599]: no method named `execute` found for struct `ThreadPool` in the current scope
+  --> src/bin/main.rs:16:14
+   |
+16 |         pool.execute(|| {
+   |              ^^^^^^^ method not found in `ThreadPool`
+
+For more information about this error, try `rustc --explain E0599`.
+error: could not compile `hello` due to previous error
+#+end_src
+
+现在发生错误是因为我们没有TreadPool上的execute方法, 回顾"给有限数量的线程创建相似的接口"章里, 我们讨论过我们的线程池应该有一个和 thread::spawn相似的接口. 另外, 我们将实现execute函数来让它接收它给定的必包然后给它一个池里空闲的线程来运行.
+
+我们将定义ThreadPool上的execute方法来接收一个必包作为参数. 回顾第13章里的"使用泛型参数和Fn特征保存必包"节, 我们可以通过使用三个不同的特征接收必包作为参数: Fn,FnMut,FnOnce. 我们需要决定在这里用哪种必包. 我们知道我们将和标准库的thread::spawn的实现类似终止于做一些事情, 所以我们可以看到在它的参数上 thread::spawn的参数有什么样的界限. 文档展示给我们如下:
+#+begin_src rust
+pub fn spawn<F, T>(f: F) -> JoinHandle<T>
+    where
+        F: FnOnce() -> T,
+        F: Send + 'static,
+        T: Send + 'static,
+#+end_src
+
+F类型参数是我们这里提到的一个; T类型参数关联到返回值, 然后我们不关心它. 我们可以看到spawn使用FnOnce作为F上的特征边界. 这可能是我们也想要的, 因为我们最终传递我们在execute里得到的参数到spawn. 我们可以更加确信FnOnce是我们想要使用的特征, 因为运行一个请求的线程将只执行那个请求的必包一次, 这匹配FnOne里的Once.
+
+F类型参数也有特征边界Send和生命周期 'static, 在如下场景下使用: 我们需要Send 转化的必包从一个线程到另一个和 'static, 因为我们不知道线程将需要多长时间执行. 让我们创建一个接收伴随这些边界的F类型的泛型参数的ThreadPool上的execute方法:
+
+文件名: src/lib.rs
+#+begin_src rust
+pub struct ThreadPool;
+
+impl ThreadPool {
+    // --snip--
+    pub fn new(size: usize) -> ThreadPool {
+        ThreadPool
+    }
+
+    pub fn execute<F>(&self, f: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+    }
+}
+#+end_src
+
+我们仍然在 FnOnce后面使用(), 因为FnOnce表达一个不接收参数然后返回单元类型()的必包. 就像函数定义一样, 返回类型可以从签名里省略, 但即使如果我们没有参数, 我们仍然需要小括号.
+
+再次, 这是最简单的execute方法的实现: 它不做任何事情,但我们只尝试让我们的代码编译. 让我们再次检查:
+#+begin_src shell
+$ cargo check
+    Checking hello v0.1.0 (file:///projects/hello)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.24s
+#+end_src
+
+它编译了! 但注意如果我们尝试 cargo run然后在浏览器里了一个请求, 你将在浏览器里看到错误, 我们在本章开始看到的一样的. 我们的库还不实际调用传入execute的必包!
+
+#+begin_quote
+注意: 关于带有严格编译器的你可能听过的说法, 比如 Haskell和rust是"如果代码编译了, 它就可以工作", 但这个说法不是完整的正确. 我们的项目编译了, 但它绝对啥也不做! 如果我们构建一个真实的, 完整的项目, 至到测试检查代码编译和有我们想要的行为, 这将是一个开始的好时候.
+#+end_quote
+
+*** 在new里验证线程的数量
+我们没有对new和execute的参数做任何事情, 让我们用我们想要的行为实现这些函数的主体. 开始前, 让我们思考一下new. 先前我们给size参数选择了一个无符号类型, 因为有一个负的线程数的池子没有意义. 然而, 0线程的池子也没有意义, 0也是一个完全付清的usize. 我们将添加代码来检查我们返回一个ThreadPool实例前size大于0, 如果它接收到一个0使用assert!宏让程序恐慌, 如代码20-13.
+
+文件名: src/lib.rs
+#+begin_src rust
+pub struct ThreadPool;
+
+impl ThreadPool {
+    /// Create a new ThreadPool.
+    ///
+    /// The size is the number of threads in the pool.
+    ///
+    /// # Panics
+    ///
+    /// The `new` function will panic if the size is zero.
+    pub fn new(size: usize) -> ThreadPool {
+        assert!(size > 0);
+
+        ThreadPool
+    }
+
+    // --snip--
+
+    pub fn execute<F>(&self, f: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+    }
+}
+#+end_src
+代码 20-13: 如果size是0 实现ThreadPool::new 恐慌
+
+我们使用文档注释给我们的ThreadPool添加一些文档. 注意通过添加在我们函数恐慌的情况外调用的一个段, 像在14章里讨论过的我们遵守良好的文档实践. 尝试运行 cargo doc --open 然后点击 ThradPool结构体来看给new生成的文档看起来像什么!
+
+我们将让new返回一个像我们在代码12-9里的I/O项目里做的一样返回一个Result, 而不是像我们在这里做的添加assert!宏. 但我们决定在这种尝试创建一个没有任何线程的线程池的情况下应该产生一个不可恢复的错误. 如果你觉得有歧义, 尝试写一个有如下编译的new版本来比较两个版本:
+#+begin_src rust
+pub fn new(size: usize) -> Result<ThreadPool, PoolCreationError> {
+#+end_src
+
+*** 创建空间来保存线程
+现在我们有一种知道我们有一个有效的线程的数量的方法来保存线程到池里, 我们可以创建这些线程然后在返回它之前保存他们进ThradPool结构体里. 但我们如何"存储"一个线程? 让我们从另一个视角看 thread::spawn的签名:
+#+begin_src rust
+pub fn spawn<F, T>(f: F) -> JoinHandle<T>
+    where
+        F: FnOnce() -> T,
+        F: Send + 'static,
+        T: Send + 'static,
+#+end_src
+
+spawn函数返回JoinHandle<T>, 这里的T是必包返回的类型. 让我们尝试也使用JoinHandle然后看发生了什么. 在我们的场景里, 我们将传入线程的必包将处理连接不返回任何东西, 所以T将是单元类型().
+
+在20-14里的代码将编译,但也不创建任何线程. 我们修改ThraadPool的定义来保存一个 thread::JoinHandle<()>实例的向量, 使用size容量初始化的向量, 设置将运行一些代码来创建线程的for循环, 然后返回一个包含它们的ThreadPool实现.
+
+文件名: src/lib.rs
+#+begin_src rust
+use std::thread;
+
+pub struct ThreadPool {
+    threads: Vec<thread::JoinHandle<()>>,
+}
+
+impl ThreadPool {
+    // --snip--
+    /// Create a new ThreadPool.
+    ///
+    /// The size is the number of threads in the pool.
+    ///
+    /// # Panics
+    ///
+    /// The `new` function will panic if the size is zero.
+    pub fn new(size: usize) -> ThreadPool {
+        assert!(size > 0);
+
+        let mut threads = Vec::with_capacity(size);
+
+        for _ in 0..size {
+            // create some threads and store them in the vector
+        }
+
+        ThreadPool { threads }
+    }
+
+    // --snip--
+
+    pub fn execute<F>(&self, f: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+    }
+}
+#+end_src
+代码 20-14: 给ThreadPool创建一个向量来保存线程
+
+我们在普通库引入std::thread到作用域, 我们使用thread::JoinHandle作为在ThreadPool里的向量的远程的类型.
+
+一旦收到一个有效的大小, 我们的ThreadPool创建一个可以保存size个元素的新向量. 我们不 使用在本书里的with_capacity函数, 这执行有Vec::new相同的任务, 但有一个重要的区别: 它在向量里预分配空间. 因为我们知道我们需要在向量里保存size个元素, 做这些先前的分配比使用Vec::new稍微更有效, 当元素被插入的时候这修改自己的大小.
+
+当你再次运行 cargo check, 你将得到更多的警告, 但它将成功.
+
+*** 负责从ThreadPool发送代码到Thread的工作结构体
+我们去掉在代码20-14里的for循环关于线程创建的注释. 这里, 我们将看一下我们实际上是如何创建线程. 标准库提供thread::spawn作来为一种创建线程的方式, 和thread::spawn期望得到一些他线在线程被创建时应该立即执行的代码. 然而, 在我们的情况下, 我们想要创建线程然后让他们等待我们之后发送的代码. 标准库的线程的实现不包括这样做的任何方式; 我们必须手动实现它.
+
+我们通过引入一个在ThreadPool和我们将管理这个新的行为的线程之间的结构体实现这种行为. 我们称这个数据结构为Worker, 这是在池的实现里的通常术语. 想象一下在餐馆里的厨房工作的人们: 至到有客人进来工人一直等待, 然后他们负责接收这些订单然后满足它他.
+
+我们将保存Worker结构体的实现,而不是保存一个在线程池里的JoinHandle<()>. 然后我们将实现一个将接收代码的必包上的Worker的方法来运行然后发送它到已经运行的线程里来运行. 我们也给每个工人一个Id, 所以当我们记录日志或者调试时,我们可以线程池里的不同工人间区别他们.
+
+当我们创建一个ThreadPool让我们生成一下随后发生了什么的修改. 在我们有了用这种方式设置的Worker以后我们将实现发送必包到线程里的代码:
+1. 定义一个保存id和JoinHandle<()>的Worker结构体.
+2. 修改 ThreadPool来保存Worker实例的向量
+3. 定义接收参数然后返回一个保存id和使用一个空必包创建的线程Worker实例的 Worker::new 函数
+4. 在 Thread::new里, 使用for循环计数来生成一个id, 创建一个有那个id的Worker, 然后保存工人到 向量里
+
+如果你为挑战做好了准备, 在看20-15里的代码前,尝试用你自己的方式尝试实例这些修改.
+
+准备好了吗? 这是这是生成阶段性修改的一种方式的代码20-15.
+
+文件名: src/lib.rs
+#+begin_src rust
+std::thread;
+
+pub struct ThreadPool {
+    workers: Vec<Worker>,
+}
+
+impl ThreadPool {
+    // --snip--
+    /// Create a new ThreadPool.
+    ///
+    /// The size is the number of threads in the pool.
+    ///
+    /// # Panics
+    ///
+    /// The `new` function will panic if the size is zero.
+    pub fn new(size: usize) -> ThreadPool {
+        assert!(size > 0);
+
+        let mut workers = Vec::with_capacity(size);
+
+        for id in 0..size {
+            workers.push(Worker::new(id));
+        }
+
+        ThreadPool { workers }
+    }
+    // --snip--
+
+    pub fn execute<F>(&self, f: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+    }
+}
+
+struct Worker {
+    id: usize,
+    thread: thread::JoinHandle<()>,
+}
+
+impl Worker {
+    fn new(id: usize) -> Worker {
+        let thread = thread::spawn(|| {});
+
+        Worker { id, thread }
+    }
+}
+#+end_src
+代码 20-15: 修改ThreadPool来保存Worker实例, 而不是直接保存线程
+
+我们修改在ThreadPool上的字段的名字threads为 workers, 因为它现在保存Worker实例而不是JoinHandler<()>实例. 我们使用for循环里的计数作为给Worker::new的参数, 然后我们保存每个新的Worker到叫workers的向量里.
+
+内部代码(比如 src/bin.main.rs里我们的服务端)不需要知道关于使用ThreadPool里的Worker结构体里的实现细节, 所以我们可以让 Worker结构体和它的 new 函数私有, Worker::new函数使用我们给它的id然后保存一个被使用一个空必包创建创建一个新线程的 JoinHandle<()>实例.
+
+这段代码将编译然后将保存我们叙在ThreadPool::new的参数指定的Wroker实例的数量. 但我们仍然不处理我们在execute得到的必包. 让我们看一下接下来延长做.
+
+*** 通过管道发送请求到线程
+现在我们将处理给定到 thread::spawn里的t怦然必包绝对不做任何事情的问题. 当前, 我们得到我们想要在execute方法里执行的必包. 但当我们在ThreadPool创建的时候创建每个Worker时, 我们需要给 thread::spawn一个必包来运行.
+
+我们想要我们刚刚创建的Worker结构体得从一个在ThreadPool里的队列上到代码运行然后发送那段代码到它的线程来运行.
+
+在16章, 你学了关于管道--线程间联系的简单方式--这种情况下将完美适合. 我们将使用一个管道给函数作为任务的队列, 然后服务execute将从ThreadPool发送一个任务到Worker实例, 这将发送任务到它的线程, 这是计划:
+1. ThreadPool将创建一个管道然后保存到管道的发送端.
+2. 每个 Worker将保存到管道的接收端.
+3. 我们将创建一个将保存我们想要发送到管道的必包的新Job结构体.
+4. execute方法发送它想要执行的任务到管道的发送端.
+5. 在它的线程里, Worker将循环它的管道的接收端然后它接收到的任何任务的必包
+让我们开始创建一个在ThreadPool::new里的管道然后保存发送端到ThreadPool实例里, 如代码20-16. 现在Job结构体不保存任何东西,但将是我们发送到管道里元素的类型.
+
+文件名: src/lib.rs
+#+begin_src rust
+use std::thread;
+// --snip--
+use std::sync::mpsc;
+
+pub struct ThreadPool {
+    workers: Vec<Worker>,
+    sender: mpsc::Sender<Job>,
+}
+
+struct Job;
+
+impl ThreadPool {
+    // --snip--
+    /// Create a new ThreadPool.
+    ///
+    /// The size is the number of threads in the pool.
+    ///
+    /// # Panics
+    ///
+    /// The `new` function will panic if the size is zero.
+    pub fn new(size: usize) -> ThreadPool {
+        assert!(size > 0);
+
+        let (sender, receiver) = mpsc::channel();
+
+        let mut workers = Vec::with_capacity(size);
+
+        for id in 0..size {
+            workers.push(Worker::new(id));
+        }
+
+        ThreadPool { workers, sender }
+    }
+    // --snip--
+
+    pub fn execute<F>(&self, f: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+    }
+}
+
+struct Worker {
+    id: usize,
+    thread: thread::JoinHandle<()>,
+}
+
+impl Worker {
+    fn new(id: usize) -> Worker {
+        let thread = thread::spawn(|| {});
+
+        Worker { id, thread }
+    }
+}
+#+end_src
+代码 20-16: 修改ThreadPool来保存发送Job实现的管道的发送端
+
+在 ThreadPool::new里, 我们创建我们新的管道然后让管道保存发送端. 这将成功编译, 也有一些警告.
+
+让我们尝试发送一个管道的接收端到每个工人里, 就像线程池创建管道一样. 我们知道我们想要使用工人创建的接收端, 所以我们将引用必包里的reciver参数. 在20-17里的代码还不能完整编译.
+
+文件名: src/lib.rs
+#+begin_src rust
+use std::sync::mpsc;
+use std::thread;
+
+pub struct ThreadPool {
+    workers: Vec<Worker>,
+    sender: mpsc::Sender<Job>,
+}
+
+struct Job;
+
+impl ThreadPool {
+    // --snip--
+    /// Create a new ThreadPool.
+    ///
+    /// The size is the number of threads in the pool.
+    ///
+    /// # Panics
+    ///
+    /// The `new` function will panic if the size is zero.
+    pub fn new(size: usize) -> ThreadPool {
+        assert!(size > 0);
+
+        let (sender, receiver) = mpsc::channel();
+
+        let mut workers = Vec::with_capacity(size);
+
+        for id in 0..size {
+            workers.push(Worker::new(id, receiver));
+        }
+
+        ThreadPool { workers, sender }
+    }
+    // --snip--
+
+    pub fn execute<F>(&self, f: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+    }
+}
+
+// --snip--
+
+
+struct Worker {
+    id: usize,
+    thread: thread::JoinHandle<()>,
+}
+
+impl Worker {
+    fn new(id: usize, receiver: mpsc::Receiver<Job>) -> Worker {
+        let thread = thread::spawn(|| {
+            receiver;
+        });
+
+        Worker { id, thread }
+    }
+}
+#+end_src
+代码 20-17: 传递管道的接收端到工人里
+
+我们做了一些小的直接的修改: 我们传递管道的接收端到Worker::new, 然后我们在必包里使用它.
+
+当我们尝试检查这段代码, 我们得到这个错误:
+#+begin_src shell
+$ cargo check
+    Checking hello v0.1.0 (file:///projects/hello)
+error[E0382]: use of moved value: `receiver`
+  --> src/lib.rs:27:42
+   |
+22 |         let (sender, receiver) = mpsc::channel();
+   |                      -------- move occurs because `receiver` has type `std::sync::mpsc::Receiver<Job>`, which does not implement the `Copy` trait
+...
+27 |             workers.push(Worker::new(id, receiver));
+   |                                          ^^^^^^^^ value moved here, in previous iteration of loop
+
+For more information about this error, try `rustc --explain E0382`.
+error: could not compile `hello` due to previous error
+#+end_src
+
+代码尝试传递receiver到多个Worker实例. 这不行, 就像从16章里的回顾: rust提供的管道的实现是多产生者, 单消耗者. 这意味着我们不能只克隆管道的消耗终端来解决修正这段代码. 即使我们做了, 那也不是我们想要使用的技术; 相反地, 我们想要在所有工作里共享单个receiver跨线程分发任务.
+
+另外, 从管道队列里取出一个任务涉及到可修改的receiver, 所以线程需要一个安全的方式来共享和修改receiver; 否则, 我们可能触及竞争条件(在16章里提到的).
+
+回顾在16章里讨论的线程安全智能指针: 跨线程共享所有权有权然后允许线程修改值, 我们需要使用 Arc<Mutex<T>>. Arc类型让多个工人拥有接收者, Mutext将确保在一个时间点只有一个工人得到从reciver来的任务. 代码20-18展示了我们需要做的修改.
+
+文件名: src/lib.rs
+#+begin_src rust
+use std::sync::mpsc;
+use std::thread;
+use std::sync::Arc;
+use std::sync::Mutex;
+// --snip--
+
+pub struct ThreadPool {
+    workers: Vec<Worker>,
+    sender: mpsc::Sender<Job>,
+}
+
+struct Job;
+
+impl ThreadPool {
+    // --snip--
+    /// Create a new ThreadPool.
+    ///
+    /// The size is the number of threads in the pool.
+    ///
+    /// # Panics
+    ///
+    /// The `new` function will panic if the size is zero.
+    pub fn new(size: usize) -> ThreadPool {
+        assert!(size > 0);
+
+        let (sender, receiver) = mpsc::channel();
+
+        let receiver = Arc::new(Mutex::new(receiver));
+
+        let mut workers = Vec::with_capacity(size);
+
+        for id in 0..size {
+            workers.push(Worker::new(id, Arc::clone(&receiver)));
+        }
+
+        ThreadPool { workers, sender }
+    }
+
+    // --snip--
+
+    pub fn execute<F>(&self, f: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+    }
+}
+
+// --snip--
+
+struct Worker {
+    id: usize,
+    thread: thread::JoinHandle<()>,
+}
+
+impl Worker {
+    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Worker {
+        // --snip--
+        let thread = thread::spawn(|| {
+            receiver;
+        });
+
+        Worker { id, thread }
+    }
+}
+#+end_src
+代码 20-18: 使用Arc和Mutext在工人间共享管道的接收端
+
+在 ThreadPool::new里, 我们把管道的接收端放到Arc和Mutex里. 对于每个新的工人, 我们克隆Arc来增加引用计数, 所以工人可以共享接收终端的所有权.
+
+有了这些修改, 代码编译了! 我们到这里了!
+
+*** 实现execute方法
+让我们最终实现ThreadPool上的execute方法. 我们也修改从一个结构体来的Job到保存execute接收必包的特征对象的类型别名. 就像我们在第19章里的"使用类型别名创建类型引用"部分讨论过的一样, 类型别名允许我们让长类型短一点. 看一下代码20-19.
+
+文件名: src/lib.rs
+#+begin_src rust
+use std::sync::mpsc;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::thread;
+
+pub struct ThreadPool {
+    workers: Vec<Worker>,
+    sender: mpsc::Sender<Job>,
+}
+
+// --snip--
+
+type Job = Box<dyn FnOnce() + Send + 'static>;
+
+impl ThreadPool {
+    // --snip--
+    /// Create a new ThreadPool.
+    ///
+    /// The size is the number of threads in the pool.
+    ///
+    /// # Panics
+    ///
+    /// The `new` function will panic if the size is zero.
+    pub fn new(size: usize) -> ThreadPool {
+        assert!(size > 0);
+
+        let (sender, receiver) = mpsc::channel();
+
+        let receiver = Arc::new(Mutex::new(receiver));
+
+        let mut workers = Vec::with_capacity(size);
+
+        for id in 0..size {
+            workers.push(Worker::new(id, Arc::clone(&receiver)));
+        }
+
+        ThreadPool { workers, sender }
+    }
+
+    pub fn execute<F>(&self, f: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let job = Box::new(f);
+
+        self.sender.send(job).unwrap();
+    }
+}
+
+// --snip--
+
+struct Worker {
+    id: usize,
+    thread: thread::JoinHandle<()>,
+}
+
+impl Worker {
+    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Worker {
+        let thread = thread::spawn(|| {
+            receiver;
+        });
+
+        Worker { id, thread }
+    }
+}
+#+end_src
+代码 20-19: 给一个保存每个必包的Box创建一个Job类型别名然后发送任务到管道里
+
+使用我们在execute里的得到的必包创建一个新的Job实例以后, 我们发送那个任务到管道的发送端. 我们调用send的unwrap来处理发送失败的情形. 这可能发生, 如果,比如, 我们停止所有从执行状态来的线程, 意味着接收端停止接收新消息. 那时, 我们不能停止我们的线程执行: 我们的线程将和线程池一样长的时间执行. 我们使用unwrap的原因是我们知道这个错误不可能发生, 但编译器不知道.
+
+但我们还没有完全做完! 在工人里, 我们的必包被发送到只引用管道接收端的 thread::spawn. 相反的, 我们需要必包永远循环, 当它得到一个任务的时候, 给一个任务请求管道的接收端然后运行任务. 让我们修改在20-20里的代码到Worker::new.
+
+文件名: src/lib.rs
+#+begin_src rust
+use std::sync::mpsc;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::thread;
+
+pub struct ThreadPool {
+    workers: Vec<Worker>,
+    sender: mpsc::Sender<Job>,
+}
+
+type Job = Box<dyn FnOnce() + Send + 'static>;
+
+impl ThreadPool {
+    /// Create a new ThreadPool.
+    ///
+    /// The size is the number of threads in the pool.
+    ///
+    /// # Panics
+    ///
+    /// The `new` function will panic if the size is zero.
+    pub fn new(size: usize) -> ThreadPool {
+        assert!(size > 0);
+
+        let (sender, receiver) = mpsc::channel();
+
+        let receiver = Arc::new(Mutex::new(receiver));
+
+        let mut workers = Vec::with_capacity(size);
+
+        for id in 0..size {
+            workers.push(Worker::new(id, Arc::clone(&receiver)));
+        }
+
+        ThreadPool { workers, sender }
+    }
+
+    pub fn execute<F>(&self, f: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let job = Box::new(f);
+
+        self.sender.send(job).unwrap();
+    }
+}
+
+struct Worker {
+    id: usize,
+    thread: thread::JoinHandle<()>,
+}
+
+// --snip--
+
+impl Worker {
+    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Worker {
+        let thread = thread::spawn(move || loop {
+            let job = receiver.lock().unwrap().recv().unwrap();
+
+            println!("Worker {} got a job; executing.", id);
+
+            job();
+        });
+
+        Worker { id, thread }
+    }
+}
+#+end_src
+代码 20-20: 接收然后执行在工作线程里的任务
+
+这里,我们第一次调用receiver上的lock来请求互斥对象, 然后当遇到任何错误时调用unwrap恐慌. 如果互斥对象在被请求状态, 请求一个锁可能失败, 如果一些保存锁还没的释放的其它的线程恐慌了,这就可能发生. 这种情况下, 调用unwrap来让这个线程恐慌是可取的正确做法. 随意修改unwrap为一个带有对你有意义的错误消息的expect.
+
+如果我们获得取互斥对象上的锁, 我们调用recv来接收从管道来的Job, 最终的unwrap也在这里移走任何的错误, 如果线程保存已经关闭的管道的发送端这将发生, ,和如果接收端关闭send函数如何如何Err相似.
+
+对recv块的调用, 所以如果没有任务了, 当前线程将等待一个任务变成可用. Mutex<T>确保在一个时间只有一个Worker尝试请求一个任务.
+
+有了这些小技巧的实现, 我们的线程池处于工作状态! 给它一个 cargo run然后发送一些请求:
+#+begin_src shell
+$ cargo run
+   Compiling hello v0.1.0 (file:///projects/hello)
+warning: field is never read: `workers`
+ --> src/lib.rs:7:5
+  |
+7 |     workers: Vec<Worker>,
+  |     ^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(dead_code)]` on by default
+
+warning: field is never read: `id`
+  --> src/lib.rs:48:5
+   |
+48 |     id: usize,
+   |     ^^^^^^^^^
+
+warning: field is never read: `thread`
+  --> src/lib.rs:49:5
+   |
+49 |     thread: thread::JoinHandle<()>,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: 3 warnings emitted
+
+    Finished dev [unoptimized + debuginfo] target(s) in 1.40s
+     Running `target/debug/main`
+Worker 0 got a job; executing.
+Worker 2 got a job; executing.
+Worker 1 got a job; executing.
+Worker 3 got a job; executing.
+Worker 0 got a job; executing.
+Worker 2 got a job; executing.
+Worker 1 got a job; executing.
+Worker 3 got a job; executing.
+Worker 0 got a job; executing.
+Worker 2 got a job; executing.
+#+end_src
+
+成功了! 现在我们有了一个执行异步连接的线程池. 不可能有超过4个的线程被创建, 所以如果服务接收到很多请求,我们的也不超载. 如果我们请求 /sleep, 服务也可以通过让其它线程运行它们服务于其它的请求.
+
+#+begin_quote
+注意: 如果你在多个浏览器窗口模拟打开 /sleep, 它们可能以5秒间隔 加载一次. 有些网页浏览器出于缓存的原因依次执行一些请求的多个实例. 这个限制不是我们的网页服务导致的
+#+end_quote
+
+学完了第18章里的 wihle let, 你可能怀疑为什么我们不像代码20-21里的一样,写工作线程代码.
+
+文件名: src/lib.rs
+#+begin_src rust
+use std::sync::mpsc;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::thread;
+
+pub struct ThreadPool {
+    workers: Vec<Worker>,
+    sender: mpsc::Sender<Job>,
+}
+
+type Job = Box<dyn FnOnce() + Send + 'static>;
+
+impl ThreadPool {
+    /// Create a new ThreadPool.
+    ///
+    /// The size is the number of threads in the pool.
+    ///
+    /// # Panics
+    ///
+    /// The `new` function will panic if the size is zero.
+    pub fn new(size: usize) -> ThreadPool {
+        assert!(size > 0);
+
+        let (sender, receiver) = mpsc::channel();
+
+        let receiver = Arc::new(Mutex::new(receiver));
+
+        let mut workers = Vec::with_capacity(size);
+
+        for id in 0..size {
+            workers.push(Worker::new(id, Arc::clone(&receiver)));
+        }
+
+        ThreadPool { workers, sender }
+    }
+
+    pub fn execute<F>(&self, f: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let job = Box::new(f);
+
+        self.sender.send(job).unwrap();
+    }
+}
+
+struct Worker {
+    id: usize,
+    thread: thread::JoinHandle<()>,
+}
+// --snip--
+
+impl Worker {
+    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Worker {
+        let thread = thread::spawn(move || {
+            while let Ok(job) = receiver.lock().unwrap().recv() {
+                println!("Worker {} got a job; executing.", id);
+
+                job();
+            }
+        });
+
+        Worker { id, thread }
+    }
+}
+#+end_src
+代码20-21: 使用while let Worker::new的一个选择性的实现
+
+这段代码编译然后运行,但不产生希望的线程的行为: 一个慢的请求将导致其它请求等待执行. 原因有些奇怪: 因为锁的所有权是基于在lock方法返回的LockResult<MutextGrad<T>> 里的MutextGuard<T>的生命周期. 在编译时, 借用检查可以执行Mutext可以被访问的资源守卫,除非我们保存了锁. 如果我们不细节思考MutextGuard<T>的生命周期, 但这种实现也导致锁被保存了比期望更长的时间.
+
+因为有了let, 在等号右边的表达式里的任何临时值当let语句结束时被立即销毁,所以使用let job= receiver.lock().unwrap.recv().unwrap();在20-20里的代码工作. 然而, while let (和 if let或者match)至到关联锁的结束不销毁临时值. 在代码20-21里, 锁保留了job()调用的周期, 意味着其它工人不能接收任务.
+
+
+
