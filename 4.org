@@ -1,0 +1,637 @@
+* 理解所有权
+所有权是rust最独特的特性深刻影响了剩下的语言. 它在没有垃圾回收的情况下让保存保证了内存安全, 所以理解所有权如果工作非常重要. 本章里, 我们将讨论所有权和几个相关的特性: 借用, 切片, 和rust如何把数据放到内存里.
+
+** 什么是所有权?
+所有权是rust程序如何管理内存的一组规则. 所有程序当运行的时候必须管理他们使用的电脑内存的方式. 一些语言有垃圾回收,在程序运行的时候不断查看不再使用的内存; 在其它语言里, 程序员必须明确地分配的释放内存. rust使用第三个方式: 内存通过一个带有编译查检的一组规则的所有权系统被管理着. 如果任何规则被破坏, 编译无法编译. 当程序运行的时候, 所有权的特性不会影响你程序的运行.
+
+因为所有权对很多程序员来说是一个新的概念, 需要一些时间来适应. 好消息是你使用rust时间越长,使用所有权系统的规则越早, 你将发现它可以很自然地开发安全且高效的代码. 坚持下去!
+
+当你理解了所有权, 你将有一个理解让rust独特的特征的坚实基础. 在本章里, 你将通过工作于一些关注很常见的数据结构的例子来学习所有权: 字符串.
+
+#+begin_quote
+堆和栈
+很多程序员不需要经常思考堆和栈, 但在像rust一样的系统编程语言里, 不管一个值在堆或者栈里影响着语言如何表现和为什么你必须明确决定. 所有权的部分将在本章的后面描述关于堆和栈, 所以这里只是预告的简短解释.
+
+堆和栈两者都是让你的代码在运行时可以使用的内存的一部分, 但他们以不同的形式构成. 堆按照得到值的顺序保存它们然后以相反的顺序移除值. 这也被叫作后进,先出. 想象一堆盘子: 当你添加更多盘子的时候, 你把他们放到盘子堆的顶部, 然后当你需要一个盘子, 你从顶部取走一个. 从中间或者底部添加或者拿手盘子都不行! 添加数据被叫作推入栈, 移除数据被叫作弹出堆. 保存在堆里的所有数据必须有一个已知的, 固定的大小. 编译时未知大小的数据或者可能改变的大小必须被保存在栈里.
+
+栈很少被管理: 当你把数据放到栈上, 你请求一个空间的特定大小. 内存分配者发现足够大的在栈上的地方, 标记它为正在使用, 然后返回一个指针, 这是那个分配的地址. 这个过程叫作在栈上分配然后有时候缩写为分配. 把值放到栈上不用考虑分配. 因为指向栈的指针未知, 固定大小, 你可以保存指针到堆上, 但当你想要实际的数据, 你必须跟随指针. 考虑坐在餐馆里. 当你进来, 你把人的号码放到组里, 然后工作人员找到一个可能放下所有人的桌子然后领你去那里. 如果在组里的一些人来迟了, 他们可以问你被放到哪里来找到你.
+
+推入栈比在堆上分配更快, 因为分配者不需要查找一块地方来保存新数据; 分配总是在堆的顶部. 相对的, 在栈上分配空间需要更多的工作, 因为分配者必须先找到一块足够大的空间来保存数据然后执行记录来为下一次分配做准备.
+
+访问堆上的数据比访问栈上的数据快, 因为你必须跟随一个指针到达那里. 如果他们在内存里跳转更少并发处理器会更快. 继续对比, 考虑在餐馆里的一个服务员预订很多桌子. 最有效的方式是移到下一个桌子前在一个桌子上得到所有的订单. 从桌面A得到一个订单, 然后从桌子B, 然后从A再得一个, 然后从B再得一个将处理得更慢. 出于同样原因, 如果工作于临近的数据(就像在堆上)而不是更快的方式(就像在栈上)一个处理器做这些工作可以更好. 在堆上他本一块大的空间可能也需要时间.
+
+当你的代码调用一个函数, 传入参数的值(包括, 潜在的, 在堆上数据的指针)和函数的本地变量需要被推送到堆上. 当函数结束, 这些值被推出栈.
+
+跟踪代码的哪部分被使用什么数据在堆上, 在堆上最小化的复制数据的大小, 和清理在堆上末使用的数据来让你不超出空间是所有权需要处理的所有问题. 一旦你理解了所有权, 你不再需要经常思考堆和栈, 但知道所有权的主要目的来管理栈数据可以帮助解释为什么它用它可以的方式工作.
+#+end_quote
+
+*** 所有权规则
+首先, 让我们看一下所有权规则, 当我们展示想象它们的示例时,记住这些规则.
++ 在rust里的每个值有一个叫作它的所有者的变量
++ 在同一时间只有一个所有者
++ 当所有者超出作用域, 值被销毁
+
+*** 变量作用域
+现在我们通过基础rust语法, 我们在例子里不包含所有的 fn main() { }代码, 所以如果你想跟随, 确保把下面的例子手动放到main函数里. 带来的结果, 我们的例子有一点简洁, 让我们关注于实际的细节, 而不是样板代码.
+
+所有权的第一个例子, 我们将看到一些变量的作用域. 一个作用域是在元素有效的程序的里的范围. 看下面的变量:
+#+begin_src rust
+
+#![allow(unused)]
+fn main() {
+let s = "hello";
+}
+#+end_src
+
+变量s引用到一个字符串字面量, 这里字符串的值是硬编码到我们程序的文本里. 变量从指向定被定义的地方到当前作用域的结尾有效. 代码4-1展示了注释说明变量s在哪里有效的程序.
+#+begin_src rust
+fn main() {
+    {                      // s is not valid here, it’s not yet declared
+        let s = "hello";   // s is valid from this point forward
+
+        // do stuff with s
+    }                      // this scope is now over, and s is no longer valid
+}
+#+end_src
+代码 4-1: 变量和在它有效的作用域
+
+换句话说, 这里在时间上有两个重要的点:
++ 当s进入作用域, 它有效
++ 至到它超出作用域它仍然有效
+  现在, 作用域和什么时候变量有效的关系和在其它语言里的相似. 现在我们通过引入String类型构建理解的顶端.
+
+*** String类型
+想象所有权规则, 我们需要一个比我们在第3章"类型类型"里覆盖的这些更复杂的数据类型时. 之前覆盖的类型全部是已知大小, 可以被放在堆上然后当他们的作用域结束从堆上弹出,   
+然后如果代码的其它部分需要在不同的作用域使用相同的值, 可以很快地很小代价地复制来产生一个新值, 独立的实例. 但我们想要查看保存在堆上的数据然后解释rust如何知道什么时候清理那些数据, String类型是很好的示例.
+
+我们将连接关联到所有权的几个部分的String. 这个方面也用于其它复杂的数据类型, 不管是标准库提供的还是你创建的. 我们将在第8章更深入地讨论String.
+
+我们已经看到字符串字面量, 这里字符串值被硬编码到我们的程序里. 字符串字面量很方便, 但他们不适用于我们想要使用文本的每个场景. 一个原因是他们是不可变的. 另一个是当我们写代码的时候不是每个字符串值都可以知道: 比如, 我们想要让用户输入然后保存的怎么办? 因为这些情况, rust有第二个字符串类型, String.这个类型管理分配地堆上的数据然后也可以保存在编译时我们不知道的大量文本. 你可以从一个字符串字面量使用from函数创建String, 像这样:
+#+begin_src rust
+
+#![allow(unused)]
+fn main() {
+let s = String::from("hello");
+}
+#+end_src
+
+双冒号操作允许我们访问这个特定的在String类型命令空间下的from函数而不是使用像string_from一样的短名字. 我们将在第5章"方法语法"里更多地讨论这个语法然后当我们在第7章"引用在模块树里的一个元素的路径"里讨论命名空间.
+
+这种字符串可以被修改:
+#+begin_src rust
+fn main() {
+    let mut s = String::from("hello");
+
+    s.push_str(", world!"); // push_str() appends a literal to a String
+
+    println!("{}", s); // This will print `hello, world!`
+}
+#+end_src
+
+所以, 这里的不同是什么? 为什么String可以被修改而字符量不行? 不同点是这两种类型如何处理内存.
+
+*** 内存和分配
+在字符串字面量的场景里, 我们知道编译时的内容, 所以文本被直接地硬编码到最终的执行体里. 这是为什么字符串字面量快速, 高效. 但这些属性只从字符串字面量的不可修改性里带来. 不幸的是, 我们不能放一块内存到二进制里给编译时未知大小泊这些文本的每一片和这些大小在运行程序时可能修改.
+
+有了String类型, 为了提供可修改性, 文本的增长, 我们需要在堆上分配大量在编译时不知道大小的内存, 来保存内容. 这意味着:
++ 内存必须在运行时从内存分配者请求
++ 当我们用完我们的Sting 我们需要一种方式来返回这些内存给分配者
+
+  第一部分是被我们用完: 当我们调用String::from, 它的实现申明它需要的内存. 在编程语言里这很常见.
+
+  然而, 第二部分很因难, 在有垃圾回收(GC)的语言里, GC跟踪和清理不再被使用的内存, 我们不需要考虑它. 在大多数没有GC的语言里, 当内存不再使用然后调用代码明确返回它, 就像我们做的请求它, 我们有责任定位这些. 如果我们忘记了, 我们将浪费内存. 如果我们做得过早, 我们将有一个非法变量. 如果我们做两次, 那也是一个bug. 我们需要精确的一次allocate一个精确的free.
+
+  rust走了不同的路: 一旦拥有它的变量超出作用域,内存自动被返回. 这是来自4-1使用String代替字符串字面量的作用域示例的一个版本:
+  #+begin_src rust
+  fn main() {
+    {
+        let s = String::from("hello"); // s is valid from this point forward
+
+        // do stuff with s
+    }                                  // this scope is now over, and s is no
+                                       // longer valid
+}
+  #+end_src
+
+在我们可以返回我们的String需要的内在给分配者的地方有一个自然点: 当s超出作用域. 当一个变量超出作用域, rust给我们调用特定的函数. 这个函数被叫作drop, 这是String的作者可以放代码来返回内存地方. rust在结束花括号的地方自动调用drop.
+
+#+begin_quote
+注意: 在C++里, 在一个元素的生命周期的结束时回收资源的这种模式有时候被称为资源请求是初始化的(RAII). 如果你使用过RAII模式, rust里的drop函数对你很熟悉.
+#+end_quote
+
+这种模式深入影响着rust编写代码的方式. 现在它可能看起来很简单, 但是当我想有使用我们在堆上分配的数据的变量时,代码的行为可能在更复杂的情况里可能出现不期望的结果.
+
+*** 变量和数据的交互方式: 移动
+在rust里多个变量可以有相同的数据交互. 让我们看一下在4-1里使用数字的例子.
+#+begin_src rust
+fn main() {
+    let x = 5;
+    let y = x;
+}
+#+end_src
+
+我们能猜测这在做什么: "绑定值5到x; 然后让值的一个复本到x里然后绑定它到y"现在我们有两个变量x和y, 两个都等于5. 这确实发生了. 因为数字是已经的简单值, 固定大小, 这两个值5都被推入栈里.
+
+现在让我们看一下String版本:
+#+begin_src rust
+fn main() {
+    let s1 = String::from("hello");
+    let s2 = s1;
+}
+#+end_src
+这看起来很像, 所以我们可能假设它的工作方式相同: 就是这样, 第二行将产生一个值的复本到要
+里然后绑定它到s2上. 但这没有发生.
+
+看图4-1来看String被旗下时发生了什么, String由三部分组成, 展示在左边: 一个指向保存字符串内容的指针, 一个长度和一个容量. 这组数据被保存在栈上. 右边的是保存内容的在堆上的内存.
+
+[[https://doc.rust-lang.org/book/img/trpl04-01.svg]]
+图 4-1: 表达在String的内存保存"hello"值绑定到s1
+
+长度是多少内存, 字节为单位, String的内容当前正在使用. 容量是内存的全部大小. 字节为单位, 字符串从分配者被收到. 长度和容量的不同问题, 但在这个场景里, 现在太长了, 忽略容量很好.
+
+当我们赋值s1到s2, String数据被复杂了. 意味着我们复制了栈上的指针, 长度和容量. 我们也没复制指针指向的在堆上的数据. 换句话说, 在内存上的数据表现看起来像图4-1.
+[[https://doc.rust-lang.org/book/img/trpl04-02.svg]]
+图 4-2:在有一个s1的指针, 长度和容量的复本的变量s2的内存上的表现
+
+之前, 我们说过当一个变量超出作用域, rust自动调用drop函数然后给那个变量清理堆上的内存. 但图4-2展示了两个数据指针的向相同的分配. 这是一个问题: 当s2和s1超出作用域, 他们两个将尝试释放相同的内存. 这被称为双释放错误也是我们之前提到的内存不安全的bug之一. 释放内存两次可能导致内存错误, 这可能潜在地导致安全漏洞.
+
+为了确保内存安全, 在行 let s2=s1后面, rust认为s1不再有效. 因此, 当s1 超出作用域rust不需要释放任何东西. 当你尝试在s2创建以后使用s1看看发生了什么; 这不能工作:
+#+begin_src rust
+fn main() {
+    let s1 = String::from("hello");
+    let s2 = s1;
+
+    println!("{}, world!", s1);
+}
+#+end_src
+
+你将得到一样像这样的错误, 因为rust阻止你使用非法引用:
+#+begin_src shell
+$ cargo run
+   Compiling ownership v0.1.0 (file:///projects/ownership)
+error[E0382]: borrow of moved value: `s1`
+ --> src/main.rs:5:28
+  |
+2 |     let s1 = String::from("hello");
+  |         -- move occurs because `s1` has type `String`, which does not implement the `Copy` trait
+3 |     let s2 = s1;
+  |              -- value moved here
+4 | 
+5 |     println!("{}, world!", s1);
+  |                            ^^ value borrowed here after move
+
+For more information about this error, try `rustc --explain E0382`.
+error: could not compile `ownership` due to previous error
+#+end_src
+
+当和其它语言一起工作时,如果你听过术语影子复制和深层复杂, 没有复制数据复制指针, 长度和容量的概念听起来像一个影子复制. 但因为rust也让第一个值无效, 它被称为移动而不是影子复制. 在这个例子里, 我们可以说s1被移动到了s2, 所以实际发生了什么如图 4-4.
+[[https://doc.rust-lang.org/book/img/trpl04-04.svg]]
+图 4-4: 当s1变非法以后内存的表现
+
+这解决了我们的问题! 只有s2有效, 当它超出作用域, 它单独释放内存, 然后我们做完了.
+
+另外, 有一种设计选项被这里影响: rust将永远不自动生成数据的"深层"复本. 因此, 任何元子性的复杂可能被假定为运行时性能方面的便宜.
+
+*** 变量和数据的交互方式: 克隆
+如果我们想要深层复杂String的堆上数据, 不只是堆上数据, 我们可以用一个通用的叫clone的方法. 我们将在第5章讨论方法的语法, 但因为语法在很多编程里是一种常见的特性, 之前你可能见过它们.
+
+这是一个实际的clone方法的例子:
+#+begin_src rust
+fn main() {
+    let s1 = String::from("hello");
+    let s2 = s1.clone();
+
+    println!("s1 = {}, s2 = {}", s1, s2);
+}
+#+end_src
+
+这工作得很好明确地产生了在图4-3里的行为, 这里的堆数据确实被复制了.
+
+当你看到一个clone的调用, 你知道一些任意的代码被执行然后那些代码可能很昂贵. 这是一个一些不同的事情可能发生的视觉上的指标.
+
+*** 只要栈上的数据: 复制
+有另一个我们还没的讨论的小点. 这段使用数字的代码--展示在4-2里的代码里的一部分--工作了且有效:
+#+begin_src rust
+fn main() {
+    let x = 5;
+    let y = x;
+
+    println!("x = {}, y = {}", x, y);
+}
+#+end_src
+
+但这段代码和我们学习过的看起来是冲突的: 我们没有调用clone, 但是x仍然有效且没有被移动到y里.
+
+原因是像有一个编译时已知大小的数字一样的类型完全被保存在栈上, 所以实际值的复制进行很快. 意味着没有让我们在创建变量y前想阻止变成有效的原因. 换句话说, 这里没有尝试复制和影子复制的不同, 所以调用clone将不做和常规的影子复制不同的事情我们也可以忽略它.
+
+rust有一个指定的标识叫Copy特性, 我们可以放它在保存在栈上像数字一样的类型上面(在第10章我们讨论更多的关于特性). 如果一个类型实现了Copy特性, 一个变量在赋值给另一个变量以后仍然有效. 如果类型或者任何它的一部分实现了Drop特性, rust不让我们申明类型有Copy. 当变量超出作用域如果类型需要一些指定的事情发生和我们添加Copy申明到那个类型, 我们将得到一个编译时错误. 参数符录C里的"派生类型"学习半于如果添加Copy申明到你的类型实现特性.
+
+所以什么类型实现了Copy特性? 你可能为给定的类型参考文档来确保, 但一般的规则是, 任何简单基础值的组可以实现Copy, 没有需要分配或者作为资源的一些形式的类型可以实现Copy, 这是一些实现了Copy的类型:
++ 所有数字类型, 比如u32
++ 布尔类型, bool, 只有值true和false
++ 所有浮点类型, 比如f64
++ 字符类型, char
++ 元组, 如果只包含也实现了Copy的, 比如 (i32,i32)实现Copy, 但 (i32, String)不实现
+
+*** 所有权和函数
+传递值到函数的语义和这些赋一个值到一个变量的相似. 传递一个变量到一个函数将移动或者复制, 就像赋值做的一样. 代码4-3有一个有些申明的例子展示了变量进入和超出作用域.
+
+文件名: src/main.rs
+#+begin_src rust
+fn main() {
+    let s = String::from("hello");  // s comes into scope
+
+    takes_ownership(s);             // s's value moves into the function...
+                                    // ... and so is no longer valid here
+
+    let x = 5;                      // x comes into scope
+
+    makes_copy(x);                  // x would move into the function,
+                                    // but i32 is Copy, so it's okay to still
+                                    // use x afterward
+
+} // Here, x goes out of scope, then s. But because s's value was moved, nothing
+  // special happens.
+
+fn takes_ownership(some_string: String) { // some_string comes into scope
+    println!("{}", some_string);
+} // Here, some_string goes out of scope and `drop` is called. The backing
+  // memory is freed.
+
+fn makes_copy(some_integer: i32) { // some_integer comes into scope
+    println!("{}", some_integer);
+} // Here, some_integer goes out of scope. Nothing special happens.
+#+end_src
+代码 4-3: 有所有权和作用域申明的函数
+
+如果我们尝试在调用takes_ownership 以后使用s, rust将抛出一个编译时错误. 这些静态检查阻止我们犯错. 添加代码到使用s和x的main里来看看你可以在哪里使用它们和所有权规则在哪里阻止这样做.
+
+*** 返回值和作用域
+返回值也可以转换所有权, 代码4-4展示了返回一些值的一个函数的一个例子, 带有在4-3里和这些相似的申明.
+
+文件名: src/main.rs
+#+begin_src rust
+fn main() {
+    let s1 = gives_ownership();         // gives_ownership moves its return
+                                        // value into s1
+
+    let s2 = String::from("hello");     // s2 comes into scope
+
+    let s3 = takes_and_gives_back(s2);  // s2 is moved into
+                                        // takes_and_gives_back, which also
+                                        // moves its return value into s3
+} // Here, s3 goes out of scope and is dropped. s2 was moved, so nothing
+  // happens. s1 goes out of scope and is dropped.
+
+fn gives_ownership() -> String {             // gives_ownership will move its
+                                             // return value into the function
+                                             // that calls it
+
+    let some_string = String::from("yours"); // some_string comes into scope
+
+    some_string                              // some_string is returned and
+                                             // moves out to the calling
+                                             // function
+}
+
+// This function takes a String and returns one
+fn takes_and_gives_back(a_string: String) -> String { // a_string comes into
+                                                      // scope
+
+    a_string  // a_string is returned and moves out to the calling function
+}
+#+end_src
+代码 4-4: 转换返回值的所有权
+
+变量的所有权每次遵循相同的模式: 赋值一个值到另一个变量移动它. 当包含在堆上的数据的变量超出作用域, 值将被通过drop清理,除非数据的所有权被移动到其它变量,
+
+当这工作的时候, 接收所有权然后返回有每个函数的所有权有一点烦. 什么可以让我们让一个函数使用值, 但不接收所有权? 如果我们想要再次使用, 在从我们也想返回的函数体里产生的任何数据, 我们传进去的任何东西又被传回来让人有点烦.
+
+rust让我们使用一元组返回多个值, 如代码4-5.
+
+文件名: src/main.rs
+#+begin_src rust
+fn main() {
+    let s1 = String::from("hello");
+
+    let (s2, len) = calculate_length(s1);
+
+    println!("The length of '{}' is {}.", s2, len);
+}
+
+fn calculate_length(s: String) -> (String, usize) {
+    let length = s.len(); // len() returns the length of a String
+
+    (s, length)
+}
+#+end_src
+代码 4-5: 返回参数的所有权
+
+但这太多了仪式和给一个概念的很多工作应该通用化. 我们很報, rust有一个不用转换所有权使用一个值的特性, 叫引用.
+
+** 引用和借用
+在4-5里的代码里的元组带来的问题是我们需要把String返回到主调函数, 来让我们在调用callulate_length后仍然使用String, 因为String被移动到calcal_length里. 相应地, 我们提供一个到String值的引用. 引用像指针, 它是一个我们可以跟随来访问保存在那个地址上的数据,它被一些其它变量拥有. 不同于指针, 引用保证指向一个具体类型的有效值. 这是如何定义使用cal_length的函数, 函数有一个指向一个对象作为参数而不是接收值的所有权的引用:
+
+文件名: src/main.rs
+#+begin_src rust
+fn main() {
+    let s1 = String::from("hello");
+
+    let len = calculate_length(&s1);
+
+    println!("The length of '{}' is {}.", s1, len);
+}
+
+fn calculate_length(s: &String) -> usize {
+    s.len()
+}
+#+end_src
+
+首先, 注意编码在所有变量定义和函数返回值的元组没有了. 其次, 注意我们传递 &s1到cal_length, 在它的定义里, 我们接收 &String而不是String. 这些&表达引用, 他们t鸡你在不接收它的所有权的情况下引用一些值. 图4-5描述了这种概念.
+[[https://doc.rust-lang.org/book/img/trpl04-05.svg]]
+图 4-5: 指向 String s1的&String s的图
+
+#+begin_quote
+注意: 使用&引用的反面是解引用, 这由解引用操作符 * 完成, 我们将在第8章看到解引用操作然后在第15章详细讨论解引用.
+#+end_quote
+
+让我们进一步看这里的函数调用:
+#+begin_src rust
+fn main() {
+    let s1 = String::from("hello");
+
+    let len = calculate_length(&s1);
+
+    println!("The length of '{}' is {}.", s1, len);
+}
+
+fn calculate_length(s: &String) -> usize {
+    s.len()
+}
+#+end_src
+&s1语法让我们创建一个关联到s1值但不拥有它的引用. 因为它不拥有它, 它指向的值当引用停止使用时也不销毁.
+
+同样, 函数的签名使用 &表明参数s的类型是一个引用. 让我们添加一些解释说明:
+#+begin_src rust
+fn main() {
+    let s1 = String::from("hello");
+
+    let len = calculate_length(&s1);
+
+    println!("The length of '{}' is {}.", s1, len);
+}
+
+fn calculate_length(s: &String) -> usize { // s is a reference to a String
+    s.len()
+} // Here, s goes out of scope. But because it does not have ownership of what
+  // it refers to, nothing happens.
+#+end_src
+
+变量s有效的作用域和其它函数的作用域相同, 通过引用被指向的值当s停止使用被销毁, 因为s没有所有权. 当函数使用引用作为参数而不是实际值, 我们不需要返回值来返回所有权, 因为我们从来没有所有权.
+
+我们调用引用借用的创建行为. 在一个真实的生活里, 如果一个人拥有一些东西, 你可以从他们那里借走它. 当你用完, 你必须把它还回去, 你不拥有它.
+
+所以如果我们尝试修改我们借到的一些东西时发生了什么? 尝试在4-6里的代码. 它不能工作!
+
+文件名: src/main.rs
+#+begin_src rust
+fn main() {
+    let s = String::from("hello");
+
+    change(&s);
+}
+
+fn change(some_string: &String) {
+    some_string.push_str(", world");
+}
+#+end_src
+代码 4-6: 尝试修改借用到的值
+
+这是错误:
+#+begin_src shell
+$ cargo run
+   Compiling ownership v0.1.0 (file:///projects/ownership)
+error[E0596]: cannot borrow `*some_string` as mutable, as it is behind a `&` reference
+ --> src/main.rs:8:5
+  |
+7 | fn change(some_string: &String) {
+  |                        ------- help: consider changing this to be a mutable reference: `&mut String`
+8 |     some_string.push_str(", world");
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `some_string` is a `&` reference, so the data it refers to cannot be borrowed as mutable
+
+For more information about this error, try `rustc --explain E0596`.
+error: could not compile `ownership` due to previous error
+#+end_src
+
+就像变量默认只读, 引用也一样. 我们不允许修改我们有的引用上的一些东西.
+
+*** 可修改的引用
+我们可以修正4-6里的代码来允许我们修改一个借用到的值, 只需要一点小的优化那个使用, 相对的, 一个读写引用:
+
+文件名: src/main.rs
+#+begin_src rust
+fn main() {
+    let mut s = String::from("hello");
+
+    change(&mut s);
+}
+
+fn change(some_string: &mut String) {
+    some_string.push_str(", world");
+}
+#+end_src
+
+首先, 我们修改s为mut. 我们在我们调用change函数的地方使用 &mut s创建一个读写引用, 然后修改函数签名来使用some_string: &mut String来接收读写引用. 这让change函数将修改它借用到的值非常清晰.
+
+读写引用有一个很大的限制: 一次你只能一个数据特定片段的一个读写引用.         尝试创建到s的两个读写引用的这段代码将失败:
+
+文件名: src/main.rs
+#+begin_src rust
+fn main() {
+    let mut s = String::from("hello");
+
+    let r1 = &mut s;
+    let r2 = &mut s;
+
+    println!("{}, {}", r1, r2);
+}
+#+end_src
+
+这是错误
+#+begin_src shell
+$ cargo run
+   Compiling ownership v0.1.0 (file:///projects/ownership)
+error[E0499]: cannot borrow `s` as mutable more than once at a time
+ --> src/main.rs:5:14
+  |
+4 |     let r1 = &mut s;
+  |              ------ first mutable borrow occurs here
+5 |     let r2 = &mut s;
+  |              ^^^^^^ second mutable borrow occurs here
+6 | 
+7 |     println!("{}, {}", r1, r2);
+  |                        -- first borrow later used here
+
+For more information about this error, try `rustc --explain E0499`.
+error: could not compile `ownership` due to previous error
+#+end_src
+
+这个错误指出这段代码非法,因为我们不能在一个时间借用s为读写超过一次. 第一个读写借用在r1里然后必须持续至到它被在println!里使用, 但读写引用的创建和它的使用之间, 我们尝试创建另一个借用和r1相同数据的引用到r2里.
+
+在相同时间阻止多个读写引用到相同数据的限制允许修改, 但以一种非常受制的方式. 这是新的rust程序员挣扎的东西, 因为大多数语言主让你的修改随你喜欢的时候. 有这个限制带来的好处是rust可以在编译时阻止数据竞争. 数据竞争类似于数据冲突, 当这三种行为时发生:
++ 两个或者更多的指针在相同时间访问相同数据
++ 至少有一个这些指针被用来写数据
++ 没有机制被用来同步访问数据
+当你尝试在运行时跟踪数据竞争时, 它导致末定义的行为和可能很难诊断和修正; rust通过拒绝编译有数据竞争的代码阻止了这个问题!
+
+像平时一样, 我们可以使用花括号创建新的用途域, 允许如下的多个读写引用, 只不要同时:
+#+begin_src rust
+fn main() {
+    let mut s = String::from("hello");
+
+    {
+        let r1 = &mut s;
+    } // r1 goes out of scope here, so we can make a new reference with no problems.
+
+    let r2 = &mut s;
+}
+#+end_src
+
+rust给组合读写和执行的引用执行相似的规则. 这段代码产生错误:
+#+begin_src rust
+fn main() {
+    let mut s = String::from("hello");
+
+    let r1 = &s; // no problem
+    let r2 = &s; // no problem
+    let r3 = &mut s; // BIG PROBLEM
+
+    println!("{}, {}, and {}", r1, r2, r3);
+}
+#+end_src
+
+这是错误
+#+begin_src shell
+$ cargo run
+   Compiling ownership v0.1.0 (file:///projects/ownership)
+error[E0502]: cannot borrow `s` as mutable because it is also borrowed as immutable
+ --> src/main.rs:6:14
+  |
+4 |     let r1 = &s; // no problem
+  |              -- immutable borrow occurs here
+5 |     let r2 = &s; // no problem
+6 |     let r3 = &mut s; // BIG PROBLEM
+  |              ^^^^^^ mutable borrow occurs here
+7 | 
+8 |     println!("{}, {}, and {}", r1, r2, r3);
+  |                                -- immutable borrow later used here
+
+For more information about this error, try `rustc --explain E0502`.
+error: could not compile `ownership` due to previous error
+#+end_src
+
+当我们有一个只读引用到相同值时我们也不能有一个读写引用. 只读引用的用户不期望值突然从它们下面修改! 然而, 多个只读引用是允许的, 因为只读取数据的人不能影响其它读取数据的人.
+
+注意引用的作用域开始于它被引入的地方然后到引用被最后一次使用的地方.比如, 这段代码将编译, 因为只读引用的最后一次使用, println!, 在读写引用被引入前发生:
+#+begin_src rust
+fn main() {
+    let mut s = String::from("hello");
+
+    let r1 = &s; // no problem
+    let r2 = &s; // no problem
+    println!("{} and {}", r1, r2);
+    // variables r1 and r2 will not be used after this point
+
+    let r3 = &mut s; // no problem
+    println!("{}", r3);
+}
+#+end_src
+
+只读引用r1和r2的作用域结束于他们最后使用的地方println!, 这在读写引用r3被创建之前. 这些作用域没有重叠, 所以这段代码被允许. 编译器告知在作用域结束前一个引用不再被使用的能力叫 非语法生命周期(简称NLL), 你可在以"[[https://doc.rust-lang.org/edition-guide/rust-2018/ownership-and-lifetimes/non-lexical-lifetimes.html][版本指引]]"里读更多.
+
+虽然有时候借用错误可能让人困惑, 记住这是rust编译器提前指出一个潜在的bug(编译时而不是运行时)然后明确的展示给你问题在哪里. 然后你不需要跟踪为什么你的数据不是你想让你它应该是的.
+
+*** 悬挂指针
+在有指针的语言里, 很容易错误地创建一个悬挂指针--引用一个在内存里可能已经被给其它人的地址--当保存一个指向那块内存的指针释放一些内存时. 在rust里, 相比之下, 编译器保证了指针不可能是悬挂指针: 如果你有一个指向一些数据的引用, 编译器确保到数据的引用产生前数据不会超出作用域.
+
+让我们尝试创建一个悬挂指针来通过编译错误看rust如何阻止他们:
+
+文件名: src/main.rs
+#+begin_src rust
+fn main() {
+    let reference_to_nothing = dangle();
+}
+
+fn dangle() -> &String {
+    let s = String::from("hello");
+
+    &s
+}
+#+end_src
+
+这是错误
+#+begin_src shell
+$ cargo run
+   Compiling ownership v0.1.0 (file:///projects/ownership)
+error[E0106]: missing lifetime specifier
+ --> src/main.rs:5:16
+  |
+5 | fn dangle() -> &String {
+  |                ^ expected named lifetime parameter
+  |
+  = help: this function's return type contains a borrowed value, but there is no value for it to be borrowed from
+help: consider using the `'static` lifetime
+  |
+5 | fn dangle() -> &'static String {
+  |                ~~~~~~~~
+
+For more information about this error, try `rustc --explain E0106`.
+error: could not compile `ownership` due to previous error
+#+end_src
+
+这个错误消息关系到一个我们还有没的覆盖的特性: 生命周期. 我们将在第10章详细讨论生命周期. 但是, 如果你忽略生命周期的部分, 消息也包含了为什么这段代码有一个问题的关键:
+#+begin_src
+this function's return type contains a borrowed value, but there is no value
+for it to be borrowed from
+#+end_src
+
+让我们近一步明确地看一下我们的dangle代码里的每个阶段发生了什么:
+
+文件名: src/main.rs
+#+begin_src rust
+fn main() {
+    let reference_to_nothing = dangle();
+}
+
+fn dangle() -> &String { // dangle returns a reference to a String
+
+    let s = String::from("hello"); // s is a new String
+
+    &s // we return a reference to the String, s
+} // Here, s goes out of scope, and is dropped. Its memory goes away.
+  // Danger!
+#+end_src
+
+因为s在dangle里面创建, 当dangle的代码完成时, s将被释放. 但我们尝试返回到它的引用. 意味着这个引用将指向非法的String. 这不好! rust不让我们做这个.
+
+这里的解决方案是直接返回String:
+#+begin_src rust
+fn main() {
+    let string = no_dangle();
+}
+
+fn no_dangle() -> String {
+    let s = String::from("hello");
+
+    s
+}
+#+end_src
+
+这将没有任何问题工作. 所有权被移出去了, 没有什么东西被释放.
+
+*** 引用的规则
+让我们回顾关于引用我们讨论过的.
++ 在任何给定的时间里, 你可以有一个读写引用或者任意个只读引用
++ 引用必须一直有效
+  下面,我们看一下引用的不同种类: 切片
+
