@@ -1,0 +1,854 @@
+* 编写自动化测试
+在1972年的散文"人性化的程序员"里 Edsger W.Dijkstra 说"程序测试可以是展示bug存在的一种非常有效的方式, 但他们不存在经常无可救药"这不意味着我们应该写尽可能多的测试.
+
+我们程序里的正确性是我们代码做到的我们想要它表达什么的程度. rust被设计为高度考虑程序正确性, 正确性很复杂不容易证明. rust的类型系统承载着这个负担的很大部分, 但类型系统不能捕捉到每一种错误. 如此, rust包括了语言里的自动软件测试编写.
+
+作为一个例子, 我们写一个叫add_two的函数, 添加2到不管什么传到它里面的数字里. 这个函数的签名接收一个数字作为参数然后返回一个数字作为结果. 当我们实现然后编译那个函数, rust做所有的类型检查和目前你已经学过的借用检查来确保那些, 比如, 我们不能传递String值或者一个非法引用到这个函数里. 但rust不检查这个函数将准备地做我们想要的. 它返回的参数加上2, 参数加10或者参数加50! 这是需要测试的地方.
+
+我们可以写测试断言, 比如, 当我们传递3到add_two函数里, 返回值是5, 不管我们什么时候修改我们的代码我们可以运行这些测试来确保任何没被修改的行为正确的存在.
+
+测试是复杂的技能: 虽然我们不能在一章里覆盖每种关于如果写好测试的细节, 我们将讨论rust测试工具的机制. 我们将讨论当你写你的测试时的申明和你可以使用的宏, 默认行为和运行你的测试提供的选项, 和如何组织测试到单元测试和集成测试.
+
+** 如何编写测试
+测试是验证非测试代码以期望的行为运行的rust函数. 测试函数的主体通常执行这三种行为:
+1. 设置任何需要的数据或者状态
+2. 运行你想要测试的代码
+3. 断言结果是你期望的.
+
+  让我们看一下rust提供的给写这些实现这三种行为的测试的特性, 包括test属性, 一些宏, 和should_panic属性.
+
+*** 测试函数的解析
+最简单的情况下, rust里的测试是一个使用test属性申明的函数. 属性是关于rust代码片段的元数据; 一个例子是我们在第5章结检体里使用过的deriver属性. 修改一个函数为一个测试函数, 添加#[test] 在fn的前面一行. 当你使用cargo test命令运行你的测试, rust构建一个运行带有test属性的函数和报告哪个测试函数通过或者知道是测试运行体二进制.
+
+当我们使用cargo做了一个新的库项目, 一个在它里面自动为我们生成的测试函数的测试模块. 每次你启动一个新项目时,这个模块帮助你开始写你的测试来让你不必查找精准的结构和测试函数的语法. 你可以添加更可能多的测试函数和更可能多的你想要的测试模块!
+
+我们将解释通过体验带有给我们生成的不需要实现测试任何测试代码的模板测试如何测试的一些方面. 然后我们将写调用我们已经写的一些代码的一些真实世界的测试然后断言它的行为正确.
+
+让我们创建一个叫adder的新库项目:
+#+begin_src shell
+$ cargo new adder --lib
+     Created library `adder` project
+$ cd adder
+#+end_src
+
+在你的adder库里的srclib.rs文件的内容,应该看起来像代码11-1.
+
+文件名: src/lib.rs
+#+begin_src rust
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn it_works() {
+        assert_eq!(2 + 2, 4);
+    }
+}
+#+end_src
+代码 11-1: 测试模块和使用cargo new自动生成的函数
+
+现在, 让我们忽略顶部两个关注函数来看看它如何工作. 注意fn 行前面的#[test] 申明: 这个属性指出这是一个测试函数, 所以测试运行者知道把这个函数当成一个测试. 我们也可以在tests模块里有非测试函数来且和设置通常场景或者执行通用操作, 所以我们需要通过 #[test]属性指明哪个函数是测试.
+
+函数体使用assert_eq! 宏断言 2 +2等于4. 这个断言作为典型测试的形式的例子. 让我们运行它看看这个测试通过.
+
+carg test运行在我们项目里的所有测试, 如代码11-2.
+#+begin_src shell
+$ cargo test
+   Compiling adder v0.1.0 (file:///projects/adder)
+    Finished test [unoptimized + debuginfo] target(s) in 0.57s
+     Running unittests (target/debug/deps/adder-92948b65e88960b4)
+
+running 1 test
+test tests::it_works ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests adder
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+#+end_src
+11-2: 运行测试自动生成的输出
+
+cargo编译然后运行测试. 在compiling, finished,和Running行后面是running 1 test行. 下面一行说明了生成的测试函数的名字, 叫 it_works, 然后运行那个测试的结果, ok. 运行测试的概览出现在后面. 文本 test result:ok. 意味着所有测试通过了, 读取 1 passed; 0 failed的部分汇总了通过或者失败的测试的数量.
+
+因为我们没有把任何测试标记为忽略, 总结里展示0 ignored. 我们n了没有筛选正在运行的测试, 所以总结的结尾显示0 filtered out. 我们将在下一节"控制测试如何运行"讨论忽略和过滤测试.
+
+0 measured总结是用来计算性能的基准测试. 基准测试是, 作为这次写的,  只在nightly rust里有效, 学习更多,参考 [[https://doc.rust-lang.org/unstable-book/library-features/test.html][关于基准测试的文档]].
+
+测试输出的下一部分, 开始于Doc-tests adder, 是给任何文档测试的结果用的. 这里我们还没有任何文档测试, 但rust可以编译任何出现在我们的API文档里的代码示例. 这个特性帮助我们让我们的文档和代码同步! 我们将在第14章里的"[[https://doc.rust-lang.org/book/ch14-02-publishing-to-crates-io.html#documentation-comments-as-tests][作为测试的文档注释]]"讨论如何写文档测试. 现在,我们忽略 Doc-test输出.
+
+让我们修改我们测试的名字来看如何修改测试的输出. 修改it_works函数和一个不同的名字, 比如exploration, 像这样:
+
+文件名: src/lib.rs
+#+begin_src rust
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn exploration() {
+        assert_eq!(2 + 2, 4);
+    }
+}
+#+end_src
+
+然后再次运行 cargo test. 现在的输出展示exploration而不是it_works:
+#+begin_src shell$ cargo test
+   Compiling adder v0.1.0 (file:///projects/adder)
+    Finished test [unoptimized + debuginfo] target(s) in 0.59s
+     Running unittests (target/debug/deps/adder-92948b65e88960b4)
+
+running 1 test
+test tests::exploration ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests adder
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+#+end_src
+
+让我们添加另一个测试, 但这次我们创建一个失败的测试! 当一些在测试函数里的东西恐慌,测试会失败. 每个测试在一个新线程里运行, 当主线程看到一个测试线程死掉, 该测试被标记为失败. 我们在第9章讨论过导致一个恐慌的最简单的办法, 就是调用panic!宏. 进入新的测试里, another, 让你的 src/lib.rs文件看起来像 11-3.
+
+文件名: src/lib.rs
+#+begin_src rust
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn exploration() {
+        assert_eq!(2 + 2, 4);
+    }
+
+    #[test]
+    fn another() {
+        panic!("Make this test fail");
+    }
+}
+#+end_src
+代码 11-3: 添加因为我们调用panic!宏,会失败的第二个测试
+
+使用cargo test再次运行测试. 输出应该看起来像11-4, 展示了我们的exploration测试通过了然后 another失败了.
+
+#+begin_src shell$ cargo test
+   Compiling adder v0.1.0 (file:///projects/adder)
+    Finished test [unoptimized + debuginfo] target(s) in 0.72s
+     Running unittests (target/debug/deps/adder-92948b65e88960b4)
+
+running 2 tests
+test tests::another ... FAILED
+test tests::exploration ... ok
+
+failures:
+
+---- tests::another stdout ----
+thread 'main' panicked at 'Make this test fail', src/lib.rs:10:9
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::another
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass '--lib'
+#+end_src
+11-4: 当一个测试通过和一个测试失败的结果
+
+test tests::another展示FAILED,  而不是ok. 在个别的结果和总结之间的两个新区域: 第一部分展示了每个测试失败的详细原因. 这个情况下 another失败, 因为它 panicked at 'Make this test fail', 它出现在src/lib.rs文件里的第10行. 下面一部分只列出所有失败的测试的名字, 当有很多测试和很多详细错误测试输出时这里很有用. 我们可以使用失败测试的名字来只运行那个测试来更简单的调试它; 我们将讨论更多关于在"如何控制测试运行"一节里运行测试的方式.
+
+在结尾的总结行: 概括, 我们的测试结果是FAILED. 我们有一个测试通过和一个测试失败.
+
+现在你已经看到在不同的场景下看到什么样的测试结果, 让我们看一些和panic!一样在测试里很用的宏.
+
+*** 使用assert! 宏检查测试结果
+assert!宏, 标准库提供, 当你想要确保在测试里的一些条件等于true时有用. 我们给assert!宏一个评估为布尔的参数. 如果值是true, assert!什么也不做然后测试通过. 如果值是false, assert!宏调用panic!宏, 让测试失败. 使用assert!宏帮助我们检查我们的代码以我们想要的方式运作.
+
+在第5章, 代码5-15里, 我们使用了Rectangle结构体和can_hold方法, 在11-5里在这里它被重复了. 让我们把这个代码放到src/lib.rs文件里然后使用assert!宏给它写一些测试.
+
+文件名: src/lib.rs
+#+begin_src rust
+#[derive(Debug)]
+struct Rectangle {
+    width: u32,
+    height: u32,
+}
+
+impl Rectangle {
+    fn can_hold(&self, other: &Rectangle) -> bool {
+        self.width > other.width && self.height > other.height
+    }
+}
+#+end_src
+代码 11-5: 使用第5章来的Rectange结构体和can_hold方法
+
+can_hold方法返回一个布尔, 意味着它可以完美地使用assert!宏. 在代码11-6里, 我们写了一个通过创建宽度为8,长度为7然后断言它可以保存另一个宽为5长为1的Rectangle实例的Rectangle实例写了一个练习can_hold的测试.
+
+文件名: src/lib.rs
+#+begin_src rust
+#[derive(Debug)]
+struct Rectangle {
+    width: u32,
+    height: u32,
+}
+
+impl Rectangle {
+    fn can_hold(&self, other: &Rectangle) -> bool {
+        self.width > other.width && self.height > other.height
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn larger_can_hold_smaller() {
+        let larger = Rectangle {
+            width: 8,
+            height: 7,
+        };
+        let smaller = Rectangle {
+            width: 5,
+            height: 1,
+        };
+
+        assert!(larger.can_hold(&smaller));
+    }
+}
+#+end_src
+代码 11-6: 一个can_hold的测试, 检查一个更大的长方形可以装一个更加的长方形
+
+注意我们添加一个行到tests模块里: use super::* . tests模块是一个跟随我们在第7章里的"[[https://doc.rust-lang.org/book/ch07-03-paths-for-referring-to-an-item-in-the-module-tree.html][引用到一个在模块树里的路径]]"的普通模块. 因为tests模块是一个内部模块, 我们需要引入在外层模块里的代码到内层模块的作用域. 这里我们使用通配来让我们在外部模块定义的所有东西在tests模块里可用.
+
+我们把我们的测试命名为 larger_can_hold_smaller, 我们创建两个我们需要的Rectangle实例. 然后我们调用assert!宏,传递它到调用larger.can_hold(&smaller)的结果里. 这个表达式应该返回true, 所以我们的测试应该通过. 让我们看一下!
+
+#+begin_src shell
+$ cargo test
+   Compiling rectangle v0.1.0 (file:///projects/rectangle)
+    Finished test [unoptimized + debuginfo] target(s) in 0.66s
+     Running unittests (target/debug/deps/rectangle-6584c4561e48942e)
+
+running 1 test
+test tests::larger_can_hold_smaller ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests rectangle
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+#+end_src
+
+它通过了! 让我们添加另一个测试, 这次断言更小的长方体不能保存更大的长方体:
+
+文件名: src/lib.rs
+#+begin_src rust
+#[derive(Debug)]
+struct Rectangle {
+    width: u32,
+    height: u32,
+}
+
+impl Rectangle {
+    fn can_hold(&self, other: &Rectangle) -> bool {
+        self.width > other.width && self.height > other.height
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn larger_can_hold_smaller() {
+        // --snip--
+        let larger = Rectangle {
+            width: 8,
+            height: 7,
+        };
+        let smaller = Rectangle {
+            width: 5,
+            height: 1,
+        };
+
+        assert!(larger.can_hold(&smaller));
+    }
+
+    #[test]
+    fn smaller_cannot_hold_larger() {
+        let larger = Rectangle {
+            width: 8,
+            height: 7,
+        };
+        let smaller = Rectangle {
+            width: 5,
+            height: 1,
+        };
+
+        assert!(!smaller.can_hold(&larger));
+    }
+}
+#+end_src
+
+因为这种情况下的can_hold函数的正确结果是false, 在我们传递它到assert!宏之前我们需要取反结果. 结果是, 如果can_hold返回false我们的测试通过:
+#+begin_src shell
+$ cargo test
+   Compiling rectangle v0.1.0 (file:///projects/rectangle)
+    Finished test [unoptimized + debuginfo] target(s) in 0.66s
+     Running unittests (target/debug/deps/rectangle-6584c4561e48942e)
+
+running 2 tests
+test tests::larger_can_hold_smaller ... ok
+test tests::smaller_cannot_hold_larger ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests rectangle
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+#+end_src
+
+两个测试通过了! 现在让我们看一下当我们在我们的代码里引入一个bug, 我们的测试结果发生了什么. 让我们通过替换为比写的更小,修改can_hold方法的实现:
+
+#+begin_src rust
+#[derive(Debug)]
+struct Rectangle {
+    width: u32,
+    height: u32,
+}
+
+// --snip--
+impl Rectangle {
+    fn can_hold(&self, other: &Rectangle) -> bool {
+        self.width < other.width && self.height > other.height
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn larger_can_hold_smaller() {
+        let larger = Rectangle {
+            width: 8,
+            height: 7,
+        };
+        let smaller = Rectangle {
+            width: 5,
+            height: 1,
+        };
+
+        assert!(larger.can_hold(&smaller));
+    }
+
+    #[test]
+    fn smaller_cannot_hold_larger() {
+        let larger = Rectangle {
+            width: 8,
+            height: 7,
+        };
+        let smaller = Rectangle {
+            width: 5,
+            height: 1,
+        };
+
+        assert!(!smaller.can_hold(&larger));
+    }
+}
+#+end_src
+
+现在运行测试, 结果如下:
+#+begin_src shell
+$ cargo test
+   Compiling rectangle v0.1.0 (file:///projects/rectangle)
+    Finished test [unoptimized + debuginfo] target(s) in 0.66s
+     Running unittests (target/debug/deps/rectangle-6584c4561e48942e)
+
+running 2 tests
+test tests::larger_can_hold_smaller ... FAILED
+test tests::smaller_cannot_hold_larger ... ok
+
+failures:
+
+---- tests::larger_can_hold_smaller stdout ----
+thread 'main' panicked at 'assertion failed: larger.can_hold(&smaller)', src/lib.rs:28:9
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::larger_can_hold_smaller
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass '--lib'
+#+end_src
+
+我们的测试产生了bug! 因为larger.width是8然后 smaller.widther是5, 现在在can_hild里的宽度的比较返回false: 8不小于5.
+
+*** 使用assert_eq! 和assert_ne!宏测试相等性
+测试功能的通用方法是比较代码在测试下的值和你期望代码返回的值的结果来确保它们相等. 你可以使用assert!宏然后传递一个使用==操作的表达式来做这些. 然而, 这是标准库提供的标准库的如此通用的测试--assert_eq!和assert_ne!--来执行这个更加方便的测试. 这些宏分别用等和不等比较两个参数. 如果断言失败它们也将输出两个值, 这让它更容易看到为什么测试失败; 明显, assert!宏只表明它使用==表达式得到一个false值, 而不是导致false值的值.
+
+在代码11-7里, 我们写一个添加2到它的参数里然后返回结果的叫add_two的函数, 然后我们使用 assert_eq!宏测试这个函数.
+
+文件名: src/lib.rs
+#+begin_src rust
+pub fn add_two(a: i32) -> i32 {
+    a + 2
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn it_adds_two() {
+        assert_eq!(4, add_two(2));
+    }
+}
+#+end_src
+代码 11-7: 使用assert_eq!宏测试add_two函数
+
+让我们看一下它通过了!
+#+begin_src shell
+$ cargo test
+   Compiling adder v0.1.0 (file:///projects/adder)
+    Finished test [unoptimized + debuginfo] target(s) in 0.58s
+     Running unittests (target/debug/deps/adder-92948b65e88960b4)
+
+running 1 test
+test tests::it_adds_two ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests adder
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+#+end_src
+
+我们给到assert_eq!宏的第一个参数,4, 等于调用add_two(2)的结果. 这个测试的那一行是 test tests::it_adds_two_two ... ok, 然后ok文本表明我们的测试通过了!
+
+让我们引入一个bug到我们的代码里来看当一个使用assert_eq!失败时它看起来像什么. 修改add_two函数的实现为add 2:
+#+begin_src rust
+pub fn add_two(a: i32) -> i32 {
+    a + 3
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn it_adds_two() {
+        assert_eq!(4, add_two(2));
+    }
+}
+#+end_src
+
+再次运行这个测试:
+#+begin_src shell
+$ cargo test
+   Compiling adder v0.1.0 (file:///projects/adder)
+    Finished test [unoptimized + debuginfo] target(s) in 0.61s
+     Running unittests (target/debug/deps/adder-92948b65e88960b4)
+
+running 1 test
+test tests::it_adds_two ... FAILED
+
+failures:
+
+---- tests::it_adds_two stdout ----
+thread 'main' panicked at 'assertion failed: `(left == right)`
+  left: `4`,
+ right: `5`', src/lib.rs:11:9
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::it_adds_two
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass '--lib'
+#+end_src
+
+我们的测试生成了bug! it_adds_two失败了, 显示消息 assertion failed: `(left == right)` 然后展示了left是4和right是5. 这个消息很有用,帮助我们开始调试: 这意味着传入 assert_eq!的left参数是4,但是right参数, 我们的add_two(2)的地方, 是5.
+
+注意在一些语言和测试构架里, 断言两个值的函数的参数等于expected和actual的调用, 与我们指定参数的顺序有关. 然而, 在rust里, 它们叫作left 和right, 和我们指定的我们希望的值和在测试内部产生的值的顺序没有关系. 我们可以写在这个测试里的断言为 assert_eq!(add_two(2), 4), 将导致一个失败消息, 展示为 assertion failed: `(left == right)` , left是5 和right是4.
+
+如果我们给它的两个值不相同assert_ne!宏会通过, 如果它们相同则会失败. 这个宏用于当我们确定一个值不是什么的时候, 但我们知道如果代码表达我们的想法,值最终不会是什么. 比如, 如果我们测试一个保证它以某种方式的输入修改它的输入的函数, 输入根据我们运行我们的测试的周的天数的方式, 断言的最好的方式可能是函数的输出不等于输入.
+
+表面上, assert_eq!和assert_ne!宏分别使用操作== 和!=. 当断言失败时, 这些宏使用调试格式输入它们的参数, 这意味着被比较的值必须实现PartialEq和Debug特性. 所有的基础类型和大多数标准库类型实现这些特征. 你定义的结构体和枚举, 你需要实现PartialEq来断言这些类型的值等于或者不待于. 你需要实现Debug来当断言失败时输出值. 因为这两个特征是可导出的特征, 就像在第5章代码5-12里提到的, 这通常直接地添加 #[deriver(PartialEq, Debug)]标记到你的结构体或者枚举定义. 更多关于这些和其它导出特征的细节参数符录C"导出的特征".
+
+*** 添加自定义的失败消息
+你也可以作为到assert!, assert_eq!和assert_ne!宏的可选参数, 添加一个错误消息来输出失败消息. 任何在一个必须的assert!参数或者两个必须的参数assert_eq!和assert_ne!后面的参数被format!宏的方式传入 (在第8章"使用+操作或者format!宏的连接")里, 所以你可以传递一个包含{}点位符和到在这些点位符的值的格式化字符串. 自定义消息用于标记断言意味着什么; 当一个测试失败, 你有一个代码有什么问题的更好的想法.
+
+比如, 让我们说, 我们有一个通过名字欢迎人们和我们想我们传入的函数的名字出现在输出里的函数:
+
+文件名: src/lib.rs
+#+begin_src rust
+pub fn greeting(name: &str) -> String {
+    format!("Hello {}!", name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn greeting_contains_name() {
+        let result = greeting("Carol");
+        assert!(result.contains("Carol"));
+    }
+}
+#+end_src
+
+这个程序的要求还没被满足, 我们很确定在招呼开始的Hello文本将改变. 我们决定当需求改变时我们不想修改测试, 所以我们只断言输出包含输入参数的文本,而不是检查确切的等于从greeting函数返回的值.
+
+让我们修改greeting不包含name来引入一个bug到这段代码里来看这个测试失败时看起来像什么:
+#+begin_src rust
+pub fn greeting(name: &str) -> String {
+    String::from("Hello!")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn greeting_contains_name() {
+        let result = greeting("Carol");
+        assert!(result.contains("Carol"));
+    }
+}
+#+end_src
+
+运行这个测试 结果如下:
+#+begin_src shell
+$ cargo test
+   Compiling greeter v0.1.0 (file:///projects/greeter)
+    Finished test [unoptimized + debuginfo] target(s) in 0.91s
+     Running unittests (target/debug/deps/greeter-170b942eb5bf5e3a)
+
+running 1 test
+test tests::greeting_contains_name ... FAILED
+
+failures:
+
+---- tests::greeting_contains_name stdout ----
+thread 'main' panicked at 'assertion failed: result.contains(\"Carol\")', src/lib.rs:12:9
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::greeting_contains_name
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass '--lib'
+#+end_src
+
+结要只指出断言失败和断言在哪行. 这种情况下的更多有用失败信息输出我们从greeting函数得到的值. 让我们修改测试函数, 给它一个自定义的错误消息使用一个填充在我们从greeting函数得到的真实值的点位符结成格式化字符串:
+#+begin_src rust
+pub fn greeting(name: &str) -> String {
+    String::from("Hello!")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn greeting_contains_name() {
+        let result = greeting("Carol");
+        assert!(
+            result.contains("Carol"),
+            "Greeting did not contain name, value was `{}`",
+            result
+        );
+    }
+}
+#+end_src
+
+现在当我们运行测试, 我们将得到更多有用的错误消息:
+#+begin_src shell
+$ cargo test
+   Compiling greeter v0.1.0 (file:///projects/greeter)
+    Finished test [unoptimized + debuginfo] target(s) in 0.93s
+     Running unittests (target/debug/deps/greeter-170b942eb5bf5e3a)
+
+running 1 test
+test tests::greeting_contains_name ... FAILED
+
+failures:
+
+---- tests::greeting_contains_name stdout ----
+thread 'main' panicked at 'Greeting did not contain name, value was `Hello!`', src/lib.rs:12:9
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::greeting_contains_name
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass '--lib'
+#+end_src
+
+我们可以看到我们在测试输出里实际得到的值, 这帮助我们调试发生了什么而不是我们期望发生了什么.
+
+*** 使用 should_panic检查恐慌
+另外检查代码返回一个我们期望的正确值, 检查我们的代码如预期处理错误处理一很重要. 比如, 考虑我们在第9 章代码9-13里创建的Guess类型. 使用Guess的其它代码依靠Guess实例将只包含1到100的值的保证. 我们可以写确保尝试合建带有超出那个范围的值的值的Guess实例的测试.
+
+我们添加另一个属性, should_panic, 到我们的测试函数来做这个. 如果函数内部的代码恐慌这个属性让测试通过; 如果函数内部的代码没有恐慌测试将失败.
+
+代码11-8展示了检查当我们期望它们的时候Guess::new的错误条件发生的一个测试.
+
+文件名: src/lib.rs
+#+begin_src rust
+pub struct Guess {
+    value: i32,
+}
+
+impl Guess {
+    pub fn new(value: i32) -> Guess {
+        if value < 1 || value > 100 {
+            panic!("Guess value must be between 1 and 100, got {}.", value);
+        }
+
+        Guess { value }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic]
+    fn greater_than_100() {
+        Guess::new(200);
+    }
+}
+#+end_src
+代码 11-8: 测试条件将导致 panic!
+
+我们把 #[should_panic]属性放到 #[test]属性后面应用它的test函数前面. 当这个测试通过时让我们看它的结果:
+#+begin_src shell
+$ cargo test
+   Compiling guessing_game v0.1.0 (file:///projects/guessing_game)
+    Finished test [unoptimized + debuginfo] target(s) in 0.58s
+     Running unittests (target/debug/deps/guessing_game-57d70c3acb738f4d)
+
+running 1 test
+test tests::greater_than_100 - should panic ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests guessing_game
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+#+end_src
+
+看起来很好! 现在让我们引入一个代码里的bug, 移除如果值大于100,new函数将恐慌的条件:
+#+begin_src shell
+pub struct Guess {
+    value: i32,
+}
+
+// --snip--
+impl Guess {
+    pub fn new(value: i32) -> Guess {
+        if value < 1 {
+            panic!("Guess value must be between 1 and 100, got {}.", value);
+        }
+
+        Guess { value }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic]
+    fn greater_than_100() {
+        Guess::new(200);
+    }
+}
+#+end_src
+
+当我们运行11-18的测试, 将失败:
+#+begin_src shell
+$ cargo test
+   Compiling guessing_game v0.1.0 (file:///projects/guessing_game)
+    Finished test [unoptimized + debuginfo] target(s) in 0.62s
+     Running unittests (target/debug/deps/guessing_game-57d70c3acb738f4d)
+
+running 1 test
+test tests::greater_than_100 - should panic ... FAILED
+
+failures:
+
+---- tests::greater_than_100 stdout ----
+note: test did not panic as expected
+
+failures:
+    tests::greater_than_100
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass '--lib'
+#+end_src
+
+这种情况下我们没有得到非常有用的信息, 但当我们看测试函数同我们看到它被标记为 #[should_panic]. 我们得到的失败意味着在测试函数里的代码没有产生恐慌.
+
+使用 should_panic的测试可能不精确, 因为他们只表明代码产生一些恐慌. 一个 should_panic的测试即出于我们期望发生的一个不同的原因测试也将通过. 让 should_panic测试更准确, 我们可以添加expected参数到should_panic属性里. 这个测试工具将确保错误消息包含被提供的文本. 比喻, 考虑修改11-9里的Guess代码, 在new函数根据值是太小或者太大, 使用不同的消息恐慌的地方.
+
+文件名: src/lib.rs
+#+begin_src rust
+pub struct Guess {
+    value: i32,
+}
+
+// --snip--
+impl Guess {
+    pub fn new(value: i32) -> Guess {
+        if value < 1 {
+            panic!(
+                "Guess value must be greater than or equal to 1, got {}.",
+                value
+            );
+        } else if value > 100 {
+            panic!(
+                "Guess value must be less than or equal to 100, got {}.",
+                value
+            );
+        }
+
+        Guess { value }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "Guess value must be less than or equal to 100")]
+    fn greater_than_100() {
+        Guess::new(200);
+    }
+}
+#+end_src
+代码 11-9: 使用一个特定恐慌消息测试条件将导致恐慌
+
+因为我们传入should_panic属性的expected参数的值是Guess::new函数恐慌的子串, 所以这个测试会通过. 我们可以指定我们期望的全部恐慌消息, 这种情况下将是 Guess value must be less then or equal to 100, get 200, 你选择什么来指定should_panic的期望参数依靠多少个恐慌消息是唯一的或者动态的和你想要你的测试多精确. 这种情况下, 恐慌消息的一个子串足够确保在测试函数里的代码执行 else if value > 100的情况.
+
+看一下当should_panic带有expected消息失败时发生了什么, 让我们再次引入一个联运到我们的代码里, 包裹if value < 1和 else if value > 100块的代码体:
+#+begin_src shell
+pub struct Guess {
+    value: i32,
+}
+
+impl Guess {
+    pub fn new(value: i32) -> Guess {
+        if value < 1 {
+            panic!(
+                "Guess value must be less than or equal to 100, got {}.",
+                value
+            );
+        } else if value > 100 {
+            panic!(
+                "Guess value must be greater than or equal to 1, got {}.",
+                value
+            );
+        }
+
+        Guess { value }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "Guess value must be less than or equal to 100")]
+    fn greater_than_100() {
+        Guess::new(200);
+    }
+}
+#+end_src
+
+这一次, 当我们运行should_panic, 它将失败:
+#+begin_src shell
+$ cargo test
+   Compiling guessing_game v0.1.0 (file:///projects/guessing_game)
+    Finished test [unoptimized + debuginfo] target(s) in 0.66s
+     Running unittests (target/debug/deps/guessing_game-57d70c3acb738f4d)
+
+running 1 test
+test tests::greater_than_100 - should panic ... FAILED
+
+failures:
+
+---- tests::greater_than_100 stdout ----
+thread 'main' panicked at 'Guess value must be greater than or equal to 1, got 200.', src/lib.rs:13:13
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+note: panic did not contain expected string
+      panic message: `"Guess value must be greater than or equal to 1, got 200."`,
+ expected substring: `"Guess value must be less than or equal to 100"`
+
+failures:
+    tests::greater_than_100
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass '--lib'
+#+end_src
+
+失败消息表明测试确实如期望的一样恐慌了, 但恐慌消息没有包括期待的字符串'',  达种情况下我们得到的恐慌消息是'', 现在我们可以开始思考我们的bug在哪里了!
+
+*** 在测试里使用 Result<T,E>
+目前, 当测试失败时我们已经写了恐慌的测试. 我们也可以写使用Result<T,E>的测试! 这是从11-1来的测试, 重写使用 Result<T,E>然后返回Err而不是恐慌:
+#+begin_src shell
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn it_works() -> Result<(), String> {
+        if 2 + 2 == 4 {
+            Ok(())
+        } else {
+            Err(String::from("two plus two does not equal four"))
+        }
+    }
+}
+#+end_src
+
+现在it_works函数应该有一个返回类型, Result<(),String>在函数体里. 当测试通过我们返回 Ok(())而不是调用assert_eq!宏, 当测试失败时返回一个带有内部String的Err.
+
+编写测试让我们返回一个Result<T,E>让在测试的地方使用问号, 如果内部的任何操作返回一个Err变量, 这可能是一种方便的方式来写应该失败的测试.
+
+在使用Reuslt<T,E>的测试里你不能使用 #[should_panic]标记. 断言一个操作返回Err变量, 不使用在 Result<T,E>值里的问号操作. 而是使用 assert!(value.is_error()).
+
+现在你知道了写测试的几种方式, 让我们看一下当我们运行我们的浿时发生了什么然后解释我们可以使用carg test的不同选项.
+
+** TODO 控制测试如何运行
+** TODO 测试组织
+
+
